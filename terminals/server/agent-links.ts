@@ -7,7 +7,11 @@
  * A link is stored before the thread exists (`begin`, with no thread id),
  * because bb resolves the new thread's tools while it is still creating it,
  * before `threads.spawn` answers with the id; `bind` fills the id in once it
- * does. A link with no thread is good for `PENDING_MS` only.
+ * does. A link with no thread is good for `PENDING_MS` only. Each `begin`
+ * gets a token of its own, and `bind` takes it: a spawn that answers after
+ * its link was dropped or replaced (the tab closed, the user let go of the
+ * chat, another window started a newer one) binds nothing, and the caller
+ * discards its thread.
  *
  * The list is in plugin storage; a copy in memory answers `configure`, which
  * bb calls synchronously. Every change is serialized. No SDK import.
@@ -20,6 +24,8 @@ export const AgentLinkSchema = z.object({
   threadId: z.string().min(1).nullable(),
   /** When the link was made, which bounds how long it may wait for its thread. */
   createdAt: z.number(),
+  /** Which `begin` made the link; links stored before tokens had none. */
+  token: z.string().default(""),
 });
 
 export type AgentLink = z.infer<typeof AgentLinkSchema>;
@@ -31,6 +37,8 @@ export interface AgentLinkPorts {
   load(): Promise<AgentLink[]>;
   save(links: AgentLink[]): Promise<void>;
   now(): number;
+  /** A token no other link has had. */
+  newToken(): string;
 }
 
 export function createAgentLinks(ports: AgentLinkPorts) {
@@ -76,22 +84,44 @@ export function createAgentLinks(ports: AgentLinkPorts) {
       return ports.now() - link.createdAt < PENDING_MS;
     },
 
+    /** The token of the tab's link, or null when it has none. */
+    tokenFor(terminalId: string): string | null {
+      return links.find((link) => link.terminalId === terminalId)?.token ?? null;
+    },
+
     /** Every link, for pruning. */
     all(): readonly AgentLink[] {
       return links;
     },
 
-    /** Starts a link for the tab, replacing its old one, before its thread exists. */
-    begin(terminalId: string): Promise<void> {
+    /** Starts a link for the tab, replacing its old one, before its thread exists; returns the link's token. */
+    async begin(terminalId: string): Promise<string> {
       const createdAt = ports.now();
-      return update((current) => [...current.filter((link) => link.terminalId !== terminalId), { terminalId, threadId: null, createdAt }]);
+      const token = ports.newToken();
+      await update((current) => [...current.filter((link) => link.terminalId !== terminalId), { terminalId, threadId: null, createdAt, token }]);
+      return token;
     },
 
-    /** Names the thread of the tab's waiting link. */
-    bind(terminalId: string, threadId: string): Promise<void> {
+    /**
+     * Names the thread of the tab's waiting link that `begin` made with
+     * `token`. False, binding nothing, when that link is gone or was replaced.
+     */
+    async bind(terminalId: string, token: string, threadId: string): Promise<boolean> {
+      let bound = false;
+      await update((current) => {
+        const link = current.find((entry) => entry.terminalId === terminalId);
+        if (link === undefined || link.token !== token || link.threadId !== null) return current;
+        bound = true;
+        return current.map((entry) => (entry === link ? { ...entry, threadId } : entry));
+      });
+      return bound;
+    },
+
+    /** Forgets the tab's link if `begin` made it with `token` (a spawn that failed); a newer link stays. */
+    dropPending(terminalId: string, token: string): Promise<void> {
       return update((current) => {
-        if (!current.some((link) => link.terminalId === terminalId)) return [...current, { terminalId, threadId, createdAt: ports.now() }];
-        return current.map((link) => (link.terminalId === terminalId ? { ...link, threadId } : link));
+        const kept = current.filter((link) => !(link.terminalId === terminalId && link.token === token));
+        return kept.length === current.length ? current : kept;
       });
     },
 

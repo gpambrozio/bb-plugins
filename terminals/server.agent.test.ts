@@ -12,7 +12,17 @@ import type { ListedTab, TabView } from "./shared/tabs";
 const osc = (body: string) => `\u001b]${body}\u0007`;
 const prompt = `${osc("133;A")}~ % ${osc("133;B")}`;
 
-async function start(options: { settings?: Record<string, boolean>; existing?: { id: string; visibility: string }[] } = {}) {
+async function start(
+  options: {
+    settings?: Record<string, boolean>;
+    existing?: { id: string; visibility: string }[];
+    /** Holds each spawn until the test releases it, by its order. */
+    holdSpawns?: boolean;
+    /** Runs before each read of the terminal's output answers. */
+    beforeOutput?: () => Promise<void>;
+  } = {},
+) {
+  const held: { release: () => void; fail: (error: Error) => void }[] = [];
   const output: { seq: number; dataBase64: string }[] = [];
   const print = (text: string) => output.push({ seq: output.length, dataBase64: Buffer.from(text).toString("base64") });
   const typed: string[] = [];
@@ -30,26 +40,32 @@ async function start(options: { settings?: Record<string, boolean>; existing?: {
         create: async ({ id }) => ({ id, status: "running", exitCode: null, cols: 80, rows: 24 }) as never,
         get: async ({ terminalId }) => ({ id: terminalId, status: "running", exitCode: null, cols: 80, rows: 24 }) as never,
         close: async ({ terminalId }) => ({ id: terminalId, status: "exited", exitCode: 0 }) as never,
-        output: async ({ sinceSeq, tailBytes }) =>
-          ({
+        output: async ({ sinceSeq, tailBytes }) => {
+          await options.beforeOutput?.();
+          return {
             chunks: output.filter((chunk) => chunk.seq >= (tailBytes !== undefined ? 0 : (sinceSeq ?? 0))),
             nextSeq: output.length,
             status: "running",
             exitCode: null,
             closeReason: null,
             truncated: false,
-          }) as never,
+          } as never;
+        },
         input: async ({ dataBase64 }) => {
-          const line = Buffer.from(dataBase64, "base64").toString("utf8");
-          typed.push(line);
-          // An integrated shell: echo, run, exit status, prompt.
-          print(`${line.trim()}\r\n${osc("133;C")}On branch main\r\n${osc("133;D;0")}${prompt}`);
+          const data = Buffer.from(dataBase64, "base64").toString("utf8");
+          typed.push(data);
+          // An integrated shell: echoes what is typed; on Enter, runs it, prints its exit status, prompts again.
+          if (data === "\r") print(`\r\n${osc("133;C")}On branch main\r\n${osc("133;D;0")}${prompt}`);
+          else print(data);
           return {} as never;
         },
       },
       threads: {
         spawn: async (args) => {
           const id = `thr_${++spawned}`;
+          if (options.holdSpawns) {
+            await new Promise<void>((release, fail) => held.push({ release, fail }));
+          }
           threads.set(id, { archivedAt: null, deletedAt: null, visibility: (args as { visibility?: string }).visibility ?? "visible" });
           return { id } as never;
         },
@@ -67,13 +83,24 @@ async function start(options: { settings?: Record<string, boolean>; existing?: {
           return { id: threadId, ...thread } as never;
         },
         send: async () => ({}) as never,
+        stop: async () => ({}) as never,
+        archive: async ({ threadId }) => {
+          threads.get(threadId)!.archivedAt = 1;
+          return {} as never;
+        },
       },
     },
   });
   await plugin(bb);
   const tab = (await harness.callRpc("open", { hostId: "mini", cols: 80, rows: 24 })) as TabView;
   print(prompt);
-  return { bb, harness, tab, typed, threads, print };
+  /** Lets the `index`th held spawn (from 0) answer, or fail. */
+  const answerSpawn = async (index: number, error?: Error) => {
+    await expect.poll(() => held.length).toBeGreaterThan(index);
+    if (error === undefined) held[index]!.release();
+    else held[index]!.fail(error);
+  };
+  return { bb, harness, tab, typed, threads, print, answerSpawn };
 }
 
 const request = {
@@ -186,7 +213,7 @@ describe("a tab's agent", () => {
     expect(text(ran)).toContain("Ran `git status`");
     expect(text(ran)).toContain("succeeded (exit code 0)");
     expect(text(ran)).toContain("On branch main");
-    expect(typed).toEqual(["git status\r"]);
+    expect(typed).toEqual(["git status", "\r"]);
     // Kept with the tab first, then the windows are told.
     await expect
       .poll(() => harness.realtimeSignals)
@@ -286,6 +313,77 @@ describe("a tab's agent", () => {
     threads.get("thr_1")!.archivedAt = 5;
     await expect(harness.callRpc("askAgent", { terminalId: tab.terminalId, text: "Again" })).rejects.toThrow(/no agent chat any more/);
     expect(await listed(harness)).toMatchObject([{ agentThreadId: null }]);
+  });
+
+  it("binds only the newest chat when two windows start one for the same tab and the spawns answer out of order", async () => {
+    const { harness, tab, threads, answerSpawn } = await start({ holdSpawns: true });
+    const older = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    const newer = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(2);
+    await answerSpawn(1);
+    expect(await newer).toEqual({ threadId: "thr_2" });
+    await answerSpawn(0);
+    await expect(older).rejects.toThrow(/another one was started for this terminal/);
+    expect(await listed(harness)).toMatchObject([{ agentThreadId: "thr_2" }]);
+    // The superseded chat is stopped and archived, and has no tools.
+    expect(harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: "thr_1" }]]);
+    expect(threads.get("thr_1")?.archivedAt).not.toBeNull();
+    const stale = await harness.callAgentTool("terminal_read", {}, { threadId: "thr_1" });
+    expect(stale).toMatchObject({ isError: true });
+  });
+
+  it("does not bring back a chat the user let go of, or whose tab closed, while bb was creating it", async () => {
+    const forgotten = await start({ holdSpawns: true });
+    const starting = forgotten.harness.callRpc("startAgent", { terminalId: forgotten.tab.terminalId, request });
+    await expect.poll(() => forgotten.harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    await forgotten.harness.callRpc("forgetAgent", { terminalId: forgotten.tab.terminalId });
+    await forgotten.answerSpawn(0);
+    await expect(starting).rejects.toThrow(/its chat was let go of/);
+    expect(await listed(forgotten.harness)).toMatchObject([{ agentThreadId: null }]);
+    expect(forgotten.harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: "thr_1" }]]);
+
+    const closed = await start({ holdSpawns: true });
+    const opening = closed.harness.callRpc("startAgent", { terminalId: closed.tab.terminalId, request });
+    await expect.poll(() => closed.harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    await closed.harness.callRpc("close", { terminalId: closed.tab.terminalId });
+    await closed.answerSpawn(0);
+    await expect(opening).rejects.toThrow(/tab closed/);
+    expect(closed.harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: "thr_1" }]]);
+    expect(await closed.bb.storage.kv.get("agents")).toEqual([]);
+  });
+
+  it("keeps a newer chat's link when an older spawn fails after it", async () => {
+    const { harness, tab, answerSpawn } = await start({ holdSpawns: true });
+    const older = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    const newer = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await answerSpawn(1);
+    await newer;
+    await answerSpawn(0, new Error("provider unavailable"));
+    await expect(older).rejects.toThrow(/provider unavailable/);
+    expect(await listed(harness)).toMatchObject([{ agentThreadId: "thr_2" }]);
+  });
+
+  it("types nothing when the user lets go of the chat while its command waits on the terminal's output", async () => {
+    let gate: (() => void) | null = null;
+    let holding = false;
+    const setup = await start({
+      beforeOutput: async () => {
+        if (holding) await new Promise<void>((release) => (gate = release));
+      },
+    });
+    await setup.harness.callRpc("startAgent", { terminalId: setup.tab.terminalId, request });
+    holding = true;
+    const run = setup.harness.callAgentTool("terminal_run", { command: "pwd" }, { threadId: "thr_1" });
+    await expect.poll(() => gate !== null).toBe(true);
+    holding = false;
+    await setup.harness.callRpc("forgetAgent", { terminalId: setup.tab.terminalId });
+    gate!();
+    const result = await run;
+    expect(result).toMatchObject({ isError: true });
+    expect(text(result)).toContain("not connected to a terminal");
+    expect(setup.typed).toEqual([]);
   });
 
   it("lets go of the thread when its tab closes", async () => {

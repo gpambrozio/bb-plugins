@@ -169,6 +169,13 @@ export class ShellTracker {
   private commandLine: string | null = null;
   private lastFinished: FinishedCommand | null = null;
   private directory: string | null = null;
+  /** Where the shell last reported its directory (OSC 7), which shells do just before drawing a prompt. */
+  private directoryReport: Place | null = null;
+  /**
+   * A command started (`C`) and has not finished. Kept apart from its start's
+   * marker, which goes when the start scrolls out of the scrollback.
+   */
+  private commandRunning = false;
   private marksSeen = false;
   /**
    * A shell drew a prompt (it reported its directory, OSC 7) while the marks
@@ -192,10 +199,18 @@ export class ShellTracker {
       terminal.parser.registerOscHandler(133, mark(133)),
       terminal.parser.registerOscHandler(633, mark(633)),
       terminal.parser.registerOscHandler(7, (data) => {
-        this.directory = directoryFromOsc7(data) ?? this.directory;
+        const directory = directoryFromOsc7(data);
+        // A report that names no directory says nothing about the shell.
+        if (directory === null) return false;
+        this.directory = directory;
+        this.directoryReport?.marker.dispose();
+        this.directoryReport = this.here();
         // Shells report their directory as they draw a prompt, so the command the marks
-        // said was running is over as far as anyone can tell. Its start is kept: a `D`
-        // that follows (a shell that reports the directory first) still finishes it.
+        // said was running is over as far as the page can show. That is a hint only (any
+        // program can print OSC 7): it makes the phase unknown, not idle, and a command is
+        // typed only at a prompt that shows (shared/prompt-ready.ts). The command's start
+        // is kept: a `D` that follows (a shell that reports the directory first) still
+        // finishes it.
         if (this.phaseNow === "running") {
           this.marksStopped = true;
           this.setPhase("unknown");
@@ -237,17 +252,16 @@ export class ShellTracker {
     return this.terminal.buffer.active.type === "alternate";
   }
 
-  /**
-   * What is typed at the prompt and not yet run: the text from the prompt's
-   * end to the cursor, while the shell is at its prompt — not what the shell
-   * draws to the right of the cursor (a right-hand prompt, a suggestion).
-   * Null when the marks do not say (no integration, or not at a prompt).
-   */
-  pendingInput(): string | null {
+  /** Where the prompt ends and typing starts, while the shell is at a prompt with an end mark (`B`); else null. */
+  promptEndAt(): { line: number; column: number } | null {
     if (this.phaseNow !== "prompt" || this.promptEnd === null || this.promptEnd.marker.isDisposed) return null;
-    const buffer = this.terminal.buffer.active;
-    const cursor = { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
-    return textBetween(this.terminal, { line: this.promptEnd.marker.line, column: this.promptEnd.column }, cursor).text.trim();
+    return { line: this.promptEnd.marker.line, column: this.promptEnd.column };
+  }
+
+  /** Where the shell last reported its directory (OSC 7), while that place is still in the buffer; else null. */
+  directoryReportAt(): { line: number; column: number } | null {
+    if (this.directoryReport === null || this.directoryReport.marker.isDisposed) return null;
+    return { line: this.directoryReport.marker.line, column: this.directoryReport.column };
   }
 
   /** Calls `listener` each time a command finishes; returns the unsubscribe. */
@@ -266,6 +280,7 @@ export class ShellTracker {
     for (const handler of this.handlers) handler.dispose();
     this.promptEnd?.marker.dispose();
     this.commandStart?.marker.dispose();
+    this.directoryReport?.marker.dispose();
     this.listeners.clear();
     this.phaseListeners.clear();
   }
@@ -304,6 +319,7 @@ export class ShellTracker {
       case "command-start":
         this.commandStart?.marker.dispose();
         this.commandStart = this.here();
+        this.commandRunning = true;
         this.setPhase("running");
         return;
       case "command-end":
@@ -338,23 +354,29 @@ export class ShellTracker {
     this.commandStart?.marker.dispose();
     this.commandStart = null;
     this.commandLine = null;
+    this.commandRunning = false;
   }
 
   private finish(exitCode: number | null): void {
-    const start = this.commandStart;
     // A `D` with no `C` before it (Enter on an empty line, in many scripts) ran nothing.
-    if (start === null || start.marker.isDisposed) {
+    if (!this.commandRunning) {
       this.dropCommand();
       if (this.phaseNow !== "unknown") this.setPhase("finished");
       return;
     }
+    const start = this.commandStart;
     const buffer = this.terminal.buffer.active;
-    const endLine = buffer.baseY + buffer.cursorY;
-    const output = textBetween(this.terminal, { line: start.marker.line, column: start.column }, { line: endLine, column: buffer.cursorX });
+    const end = { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
+    const kept = start !== null && !start.marker.isDisposed;
+    // A start that scrolled out of the scrollback (a long build) still ran: its output
+    // is what the buffer kept of it, with its beginning lost.
+    const output = kept
+      ? textBetween(this.terminal, { line: start.marker.line, column: start.column }, end)
+      : { ...textBetween(this.terminal, { line: 0, column: 0 }, end), truncated: true };
     let command = this.commandLine;
     if (command === null) {
       const prompt = this.promptEnd;
-      command = prompt === null || prompt.marker.isDisposed ? "" : this.drawnCommand(prompt, start);
+      command = !kept || prompt === null || prompt.marker.isDisposed ? "" : this.drawnCommand(prompt, start);
     }
     const finished: FinishedCommand = { command, output: output.text, truncated: output.truncated, exitCode, cwd: this.directory };
     this.lastFinished = finished;

@@ -22,6 +22,7 @@ import {
   TerminalToolError,
   readTerminal,
   runCommand,
+  TerminalLocks,
   type AgentTerminalPorts,
   type TabFacts,
 } from "./terminal-agent";
@@ -96,8 +97,32 @@ function isGone(error: unknown): boolean {
   return error instanceof Error && "status" in error && error.status === 404;
 }
 
+const DETACHED =
+  "This chat is not connected to a terminal any more: the user started another chat for it, let go of it, or closed its tab.";
+
 export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   const { links } = deps;
+  /** One command at a time per tab, from whichever chat. */
+  const locks = new TerminalLocks();
+  /** Set once this copy of the plugin is unloaded: a spawn that answers after that is discarded. */
+  let disposed = false;
+  bb.onDispose(() => {
+    disposed = true;
+  });
+
+  /**
+   * A check that the chat still has the tab, as it had it when the call began:
+   * the same link (by token), still naming this thread. A new chat for the
+   * tab, letting go of it or closing the tab makes it throw.
+   */
+  function accessCheck(threadId: string, terminalId: string): () => void {
+    const token = links.tokenFor(terminalId);
+    return () => {
+      if (disposed || links.terminalFor(threadId) !== terminalId || links.tokenFor(terminalId) !== token) {
+        throw new TerminalToolError(DETACHED);
+      }
+    };
+  }
 
   /** The tab the calling thread helps with, waiting a little for a spawn that has not answered yet. */
   async function tabForThread(threadId: string, signal: AbortSignal): Promise<TabFacts> {
@@ -109,11 +134,7 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
       await deps.sleep(200);
       terminalId = links.terminalFor(threadId);
     }
-    if (terminalId === null) {
-      throw new TerminalToolError(
-        "This chat is not connected to a terminal any more: the user started another chat for it, let go of it, or closed its tab.",
-      );
-    }
+    if (terminalId === null) throw new TerminalToolError(DETACHED);
     const facts = tabFacts(await deps.tabs(), terminalId);
     if (facts === null) throw new TerminalToolError("The terminal tab this chat was started from has been closed.");
     return facts;
@@ -143,7 +164,7 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   bb.agents.registerTool({
     name: RUN_TOOL,
     description:
-      "Type one command into the user's terminal tab (the one this chat was started from), run it in their shell, and wait for it: returns what it printed and its exit code. The user sees it run. Refuses while a command is running, a full-screen program is open, or the user has typed something at the prompt.",
+      "Type one command into the user's terminal tab (the one this chat was started from), run it in their shell, and wait for it: returns what it printed and its exit code. The user sees it run. Types only at an empty shell prompt the terminal plainly shows, and presses Enter only once the shell echoed the command; refuses (saying why and how to fix it) while a command runs, a program or full-screen app has the terminal, or the user has typed something at the prompt.",
     presentation: { label: { pending: "Running a command in the terminal", completed: "Ran a command in the terminal" }, icon: { glyph: "Terminal" } },
     parameters: z.object({
       command: z.string().min(1).describe("One line of shell input, as the user would type it; join several commands with && or ;."),
@@ -156,14 +177,15 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
         .describe("How long to wait for it to finish (default 30). A command still running then is left running."),
     }),
     execute: ({ command, timeoutSeconds }, ctx) =>
-      asTool(async () =>
-        runCommand(
+      asTool(async () => {
+        const tab = await tabForThread(ctx.threadId, ctx.signal);
+        return runCommand(
           deps.ports,
-          await tabForThread(ctx.threadId, ctx.signal),
+          tab,
           { command, ...(timeoutSeconds === undefined ? {} : { timeoutMs: timeoutSeconds * 1000 }) },
-          ctx.signal,
-        ),
-      ),
+          { signal: ctx.signal, checkAccess: accessCheck(ctx.threadId, tab.terminalId), locks },
+        );
+      }),
   });
 
   bb.agents.configure((context) => {
@@ -193,6 +215,20 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     return null;
   }
 
+  /** Stops and archives a chat no tab will use; a failure is logged, not thrown. */
+  async function discardThread(threadId: string): Promise<void> {
+    try {
+      await bb.sdk.threads.stop({ threadId });
+    } catch (error) {
+      if (!isGone(error)) bb.log.warn(`could not stop an unused agent chat ${threadId}: ${errorText(error)}`);
+    }
+    try {
+      await bb.sdk.threads.archive({ threadId });
+    } catch (error) {
+      if (!isGone(error)) bb.log.warn(`could not archive an unused agent chat ${threadId}: ${errorText(error)}`);
+    }
+  }
+
   async function requireTab(terminalId: string): Promise<void> {
     if (!(await deps.tabs()).some((tab) => tab.terminalId === terminalId)) throw new Error("That terminal tab is closed.");
   }
@@ -203,16 +239,28 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
       const args = { ...spawnArgs(request, terminalId), visibility: await deps.newChatVisibility() };
       // Another copy of the plugin (a reload) may have saved them: the new thread's first session reads them.
       await deps.loadInstructions().catch(() => undefined);
-      await links.begin(terminalId);
+      const token = await links.begin(terminalId);
       let threadId: string;
       try {
         const spawned = await bb.sdk.threads.spawn(args as unknown as Parameters<typeof bb.sdk.threads.spawn>[0]);
         threadId = spawned.id;
       } catch (error) {
-        await links.drop(terminalId).catch(() => undefined);
+        await links.dropPending(terminalId, token).catch(() => undefined);
         throw error;
       }
-      await links.bind(terminalId, threadId);
+      // While bb created the thread, the tab may have closed, the user let go of the chat,
+      // another window started a newer one, or this copy of the plugin was unloaded.
+      const tabOpen = !disposed && (await deps.tabs().then((tabs) => tabs.some((tab) => tab.terminalId === terminalId)).catch(() => false));
+      const bound = tabOpen && (await links.bind(terminalId, token, threadId));
+      if (!bound) {
+        if (!tabOpen) await links.dropPending(terminalId, token).catch(() => undefined);
+        await discardThread(threadId);
+        throw new Error(
+          tabOpen
+            ? "While this chat was starting, another one was started for this terminal or its chat was let go of; this one was stopped and archived."
+            : "The terminal tab closed while its chat was starting; the chat was stopped and archived.",
+        );
+      }
       // A new chat for the tab: the last one's commands go with it.
       await deps.commands.clear(terminalId).catch(() => undefined);
       return { threadId };

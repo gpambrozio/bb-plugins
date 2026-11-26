@@ -6,6 +6,7 @@
 import { Terminal } from "@xterm/headless";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { promptReadiness } from "./prompt-ready";
 import { lastLines, parseShellMark, ShellTracker, type FinishedCommand } from "./shell-marks";
 
 const ESC = "\u001b";
@@ -87,9 +88,9 @@ describe("ShellTracker", () => {
     // zsh draws RPROMPT at the right edge, then puts the cursor back after the left prompt.
     const rprompt = (text: string) => `\u001b7\u001b[${40 - text.length + 1}G${text}\u001b8`;
     await write(prompt() + rprompt("1 ↵"));
-    expect(tracker.pendingInput()).toBe("");
+    expect(promptReadiness(terminal, tracker)).toMatchObject({ ready: true });
     await write("ls nope");
-    expect(tracker.pendingInput()).toBe("ls nope");
+    expect(promptReadiness(terminal, tracker)).toEqual({ ready: false, reason: "typed", typed: "ls nope" });
     await write(run(""));
     await write("ls: nope: No such file or directory\r\n" + done(1));
     expect(finished[0]?.command).toBe("ls nope");
@@ -108,17 +109,6 @@ describe("ShellTracker", () => {
     await write(prompt() + osc("633;E;make all") + run("make all"));
     await write(done(2));
     expect(finished[0]?.command).toBe("make all");
-  });
-
-  it("says what is typed at the prompt and not yet run", async () => {
-    const { tracker, write } = setUp();
-    expect(tracker.pendingInput()).toBeNull();
-    await write(prompt());
-    expect(tracker.pendingInput()).toBe("");
-    await write("git sta");
-    expect(tracker.pendingInput()).toBe("git sta");
-    await write(run(""));
-    expect(tracker.pendingInput()).toBeNull();
   });
 
   it("reads what the README's bash lines send, an empty line and another PROMPT_COMMAND included", async () => {
@@ -146,13 +136,33 @@ describe("ShellTracker", () => {
     expect(tracker.phase()).toBe("unknown");
     expect(tracker.hasIntegration()).toBe(false);
     expect(tracker.stoppedMarks()).toBe(true);
-    expect(tracker.pendingInput()).toBeNull();
     expect(finished.map((command) => command.command)).toEqual(["df -h"]);
 
     // Marks again (another ssh session, or integration loaded): they count again.
     await write(`${osc("133;A")}nas % ${osc("133;B")}`);
     expect(tracker.hasIntegration()).toBe(true);
     expect(tracker.stoppedMarks()).toBe(false);
+    expect(tracker.phase()).toBe("prompt");
+  });
+
+  it("takes no notice of a directory report that names no directory", async () => {
+    const { tracker, write } = setUp();
+    await write(osc("7;file://mac/Users/me/app") + prompt() + run("make"));
+    await write(osc("7;not a url") + osc("7;"));
+    expect(tracker.phase()).toBe("running");
+    expect(tracker.hasIntegration()).toBe(true);
+    expect(tracker.cwd()).toBe("/Users/me/app");
+  });
+
+  it("finishes a command whose start scrolled out of the scrollback, with its exit status and the output kept", async () => {
+    const { tracker, finished, write } = setUp();
+    await write(prompt() + run("make all"));
+    await write(Array.from({ length: 2_000 }, (_, index) => `line ${index + 1}`).join("\r\n") + "\r\nError 2\r\n");
+    await write(done(2) + prompt());
+    expect(finished).toHaveLength(1);
+    expect(finished[0]).toMatchObject({ exitCode: 2, truncated: true });
+    expect(finished[0]?.output.split("\n").at(-1)).toBe("Error 2");
+    expect(tracker.last()?.exitCode).toBe(2);
     expect(tracker.phase()).toBe("prompt");
   });
 

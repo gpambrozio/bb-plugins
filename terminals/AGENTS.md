@@ -30,12 +30,13 @@ specific to `terminals`.
 | `app/chat-text.ts` | The fenced block "Add to chat" writes, and adding it to a draft. |
 | `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it (Windows paths compared without case, either slash), and the default project. |
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
-| `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7, the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer, what is typed and not run. |
+| `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7 (and where each was), the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer. |
+| `shared/prompt-ready.ts` | Whether the terminal plainly shows the shell waiting at an empty prompt, from marks or, without them, from a directory report and the prompt's shape; and what is typed on either side of the cursor. |
 | `shared/osc7.ts` | The directory an OSC 7 sequence names. |
 | `shared/agent.ts` | What the page tells a tab's agent (the one-line failure prompt, the fixed line and the built-in instructions text, filling `{{tab}}` and `{{machine}}`), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
-| `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers. |
+| `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers, if the link is still the one that spawn began (its token). |
 | `server/agent.ts` | `terminal_read` and `terminal_run`, `configure` (the tools for a tab's own thread, the skill for all), and starting, messaging and letting go of a tab's thread. |
-| `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, the state checks before typing, typing and waiting for the command's end (or quiet output without marks). |
+| `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, one run per tab at a time, typing, the echo check before Enter, and waiting for the command's end (or quiet output without marks). |
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
 | `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
 | `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
@@ -240,15 +241,42 @@ only to a thread whose metadata names a tab *and* that the link store says is th
 tab is still waiting, under `PENDING_MS`, for the thread `spawn` is creating: bb resolves the first
 session before `spawn` answers). Metadata alone grants nothing; every call is checked again by the
 calling thread's id, which bb supplies. A tool call that arrives before `spawn` answered waits up to
-15 s for the link. Letting go, a newer chat, or closing the tab ends the access at once.
+15 s for the link. Letting go, a newer chat, or closing the tab ends the access at once, also for a
+`terminal_run` already under way: it checks the link (thread and token) and its stop signal before it
+types and again before Enter, and erases its text if either changed in between.
 
-**The agent types at the user's prompt, visibly, and only when the shell is ready.** `terminal_run`
-replays bb's last 256 KB of the terminal's output into a headless xterm sized like the session, refuses
-on the alternate screen, while a command runs, or when text sits between the prompt's end and the cursor
-(text right of the cursor, such as zsh's RPROMPT or an autosuggestion, does not count), then sends one
-line plus Enter through `terminals.input` and polls `terminals.output` from the next sequence until the
-shell's `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left
-running). Each command it types is stored with the tab (`server/agent-commands.ts`) and then published on
+**A spawn binds only the link it began.** `begin` gives each pending link a token, `bind` takes it, and
+binds nothing when the link was dropped (the user let go, the tab closed) or replaced (another window
+started a chat for the tab) while bb created the thread. `startAgent` then stops and archives the new
+thread and says why; a failed spawn drops only its own pending link. A copy of the plugin that was
+unloaded while its spawn ran discards the thread the same way, since the new copy holds the links.
+Before tokens, the last spawn to answer won (an older one over a newer), and a forgotten chat came back.
+
+**The agent types at the user's prompt, visibly, and only on positive evidence that the shell waits at
+an empty prompt** (`shared/prompt-ready.ts`). `terminal_run` replays bb's last 256 KB of the terminal's
+output into a headless xterm sized like the session. With marks, the evidence is a prompt whose end
+(`B`) is marked, with nothing typed after it. Without them (the owner's zsh sends none) it is a valid
+OSC 7 (shells send it just before drawing a prompt; oh-my-zsh does in precmd), at most
+`MAX_PROMPT_ROWS` rows drawn since, the cursor's row ending in a prompt sign (`$ % # > ❯`) and a space,
+and exactly one prompt sign-and-space in what was drawn since the report: a program started from the
+prompt (redis-cli, irb, python -q) adds its own after the shell's, and so does typed-ahead text ending
+like a prompt. Unknown means refuse, with a message that says how to fix it (shell integration, or a
+prompt of that shape). This replaced "type unless the marks say otherwise", which typed into a `sudo`
+password prompt or a running build in a shell without marks, and after an output long enough to push
+its `C` mark out of the replayed tail. In both cases anything to the right of the cursor that is not a
+right-hand prompt (set apart by two blanks and ending at the right edge), or any text below it, is
+typing: Ctrl-A or a recalled line put the owner's text there. zsh's autosuggestions draw only after
+text is typed, so an empty prompt has none. Then it sends the command without Enter, waits up to
+`ECHO_TIMEOUT_MS` for exactly that text between where it started and the cursor (backslash escapes
+aside: oh-my-zsh turns on url-quote-magic, which types `curl http://x/\?a=1` for `?`), and only then sends
+Enter; anything else (the owner typed at the same moment, a program that does not echo) gets one DEL
+per character and a refusal. Runs are serialized per tab (`TerminalLocks`), so a parallel call checks
+the shell again after the first one's command. The owner's keystrokes reach bb's socket without
+passing through the plugin, so nothing can hold them off: the remaining gap is between reading the echo
+and the Enter arriving. After Enter it polls `terminals.output` from the next sequence until the shell's
+`D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left running).
+A command whose `C` marker scrolled out of the scrollback still finishes at its `D`, with what the buffer
+kept of its output. Each command it types is stored with the tab (`server/agent-commands.ts`) and then published on
 `agent-typed`, on which the shown tab reads its list again (`agentCommands`).
 
 **The "agent ran" list belongs to the chat, not to the page.** The owner wants every command the tab's
@@ -273,9 +301,10 @@ marks everything but the card works.
 ssh may send OSC 133 when the local one does not. Its `exit` sends `C`, the connection closes before
 any `D`, and the local prompt that follows sends no mark, so the tracker stayed "running" for good and
 `terminal_run` refused every command (seen live: an Instax server tab after an ssh session to a NAS).
-Shells report OSC 7 as they draw a prompt, so an OSC 7 while "running" sets the phase to "unknown" and
-`hasIntegration()` to false (`stoppedMarks()`), until the next mark: the tools then treat the shell as
-one without marks. The command's start is kept, so a shell that reports its directory before its `D`
+Shells report OSC 7 as they draw a prompt, so a valid OSC 7 while "running" sets the phase to "unknown"
+and `hasIntegration()` to false (`stoppedMarks()`), until the next mark: the tools then treat the shell as
+one without marks, which types only at a prompt that shows (above). Any program can print OSC 7, so it is
+a hint that ends "running", never proof of a prompt; one that names no directory is ignored. The command's start is kept, so a shell that reports its directory before its `D`
 still finishes it. A shell that sends neither marks nor OSC 7 after such a session would still be stuck.
 The tools replay history at the tab's size now: a program that drew for another width (that remote
 zsh, at 172 columns in a 144-column tab) can read back with mangled command lines.

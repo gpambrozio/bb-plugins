@@ -93,9 +93,18 @@ The colours and font follow bb's theme, as bb's own terminal does.
   keep it, and it is cleared when you start a new chat from the panel or close the tab. Its fold button
   turns the card into a small pill with the count, so it does not sit over the terminal; tap the pill to
   open it again. Each tab remembers that in this browser. While the tab has an agent chat, its icon is
-  the bot. The agent never types while a command is running, into a full-screen
-  program (an editor, a pager), or over something you have typed and not run yet. A command still
-  running after its wait (30 seconds unless the agent asks for longer) is left running.
+  the bot. A command still running after its wait (30 seconds unless the agent asks for longer) is
+  left running.
+- **It types only at an empty prompt it can see.** With the shell integration below, that is a
+  prompt your shell marked, with nothing typed after it. Without it, it is a prompt your shell drew
+  right after reporting its directory (OSC 7, which oh-my-zsh and the lines below send), ending in
+  `$`, `%`, `#`, `>` or `❯` and a space, with nothing typed after it: oh-my-zsh themes such as bira
+  (`╰─$`) work as they are. Anything else (a command running, a password or other question, a REPL, an
+  editor, text you typed, the cursor moved back into it) and the agent types nothing and says so. It
+  runs one command per tab at a time, and presses Enter only once your shell has echoed exactly that
+  command: if the line shows anything else (you typed at the same moment), it erases what it typed and
+  runs nothing. If your prompt has another shape, or your shell does not report its directory, the
+  agent can still read the terminal but asks you to run commands; adding the lines below fixes it.
 - **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without
   asking you to confirm first. Commands it decides to run by itself stay to looking around; it asks
   before anything destructive, slow, or that needs a password.
@@ -115,8 +124,8 @@ The agent runs on your own agent provider, so a chat costs what any other bb thr
 
 The page knows a command failed only when the shell marks its prompts and each command's exit status
 with the OSC 133 sequences many terminals use. Without them, everything else works, including the bot
-button and both tools, but no card offers help, and the agent is told it cannot see exit codes: a
-command it runs is read back once its output goes quiet. The same goes once you leave a shell that sent
+button and both tools (at a prompt of the shape above), but no card offers help, and the agent is told
+it cannot see exit codes: a command it runs is read back once its output goes quiet. The same goes once you leave a shell that sent
 the marks (an ssh session to a machine set up for them) for one that does not, from its next prompt.
 
 - **Out of the box:** fish 4 and later, and nushell. A prompt framework or shell-integration script

@@ -19,9 +19,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the terminal's corner, in bb's accent colour, lists every command the chat ran there: the last
   three, with a button to show them all. It stays for the whole chat, across reloads and windows, until
   you start a new chat or close the tab, and folds down to a small pill when you want the terminal
-  clear. It never types while a command runs, into an editor or
-  other full-screen program, or over something you typed and have not run. Ask it to run something
-  and it runs it there, in your terminal, without asking you to confirm first.
+  clear. It types only at an empty prompt it can see: never while a command runs, at a password or
+  other question, into an editor or other program, or over something you typed, wherever the cursor
+  is. It runs one command at a time, and presses Enter only once your shell shows exactly that
+  command; if you type at the same moment, it erases its text and runs nothing. Ask it to run something
+  and it runs it there, in your terminal, without asking you to confirm first. If your prompt does not
+  plainly show that it is waiting (see the README), it asks you to run the command yourself.
 - **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty
   message unless the last command failed. A tab keeps
   its chat, so the next failure goes to the same one; start a new chat from the panel whenever you
@@ -38,6 +41,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whatever you write.
 - **After an ssh session ends,** the agent no longer finds the terminal stuck "running" a command when
   the remote shell reported its prompts and your own shell does not: your prompt coming back is enough.
+- **Long outputs keep their result.** A command that prints more than the terminal keeps still reports
+  how it ended, so the agent and the failure card see it.
 - **Seeing failed commands** needs a shell that marks its prompts: fish 4 and later and nushell do; for
   zsh and bash, the README has lines to add to your shell's settings file.
 

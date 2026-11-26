@@ -44,8 +44,12 @@ one command at the user's prompt, wait for it, get its output and exit code). If
 you are that chat: the user asked you to help with that terminal and to run commands in it, so use
 them rather than `bb terminal send`, and read before you run. When the user asks you to run something,
 run it there with `terminal_run`, not in your own shell, and without asking them to confirm first; for
-commands you choose to run yourself, ask before anything destructive, slow or interactive. `terminal_run` refuses while a command runs, a full-screen program is open, or the
-user has typed something at the prompt; say so and wait for the user rather than working around it.
+commands you choose to run yourself, ask before anything destructive, slow or interactive. `terminal_run` types only at an empty prompt it can see: it refuses while a command runs, a
+full-screen program or another program's prompt (a password, a REPL) has the terminal, the user has
+typed something at the prompt, or (in a shell without OSC 133 marks) the prompt does not plainly show
+that the shell waits. It presses Enter only once the shell echoed the command, and runs one command per
+tab at a time. When it refuses, tell the user what its message says, including how to fix it, and wait
+for them rather than working around it.
 
 A failed command reaches that chat as "The last command I ran returned an error. Help me debug.": the
 user pressed **Ask an agent** for it. The message does not quote the terminal, so call `terminal_read`

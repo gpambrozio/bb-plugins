@@ -3,10 +3,16 @@
  * terminal shows, and run a command in its shell and wait for the result.
  *
  * The shell is the user's own, interactive, so `run` types the command
- * where the user would and the user sees it echoed. It types only when the
- * shell is ready for it: never into a full-screen program, and — when the
- * shell reports its prompt (OSC 133, shared/shell-marks.ts) — never while a
- * command runs or over something the user has typed and not yet run.
+ * where the user would and the user sees it echoed. It types only where the
+ * terminal shows plainly that the shell waits at an empty prompt
+ * (shared/prompt-ready.ts), one command per tab at a time, and presses Enter
+ * only once the shell has echoed exactly that command after the prompt: if the
+ * line shows anything else (the user typed at the same moment, or the program
+ * there does not echo like a shell), it erases what it typed and runs nothing.
+ *
+ * The user's keystrokes reach bb's terminal without passing through this
+ * plugin, so nothing here can hold them off. The echo check narrows the gap to
+ * the moment between reading the echo and pressing Enter.
  *
  * bb keeps each terminal's raw output; this file replays its tail into a
  * headless xterm sized like the shell, so what the agent reads is what the
@@ -14,6 +20,7 @@
  */
 import { Terminal } from "@xterm/headless";
 
+import { promptReadiness, PROMPT_SIGNS, type Readiness } from "../shared/prompt-ready";
 import { lastLines, ShellTracker, textBetween, type FinishedCommand, type MarkableTerminal } from "../shared/shell-marks";
 
 /** The parts of a bb terminal session this file reads. */
@@ -57,6 +64,12 @@ export const DEFAULT_READ_LINES = 120;
 export const MAX_READ_LINES = 2_000;
 /** The longest command `run` types. */
 export const MAX_COMMAND_LENGTH = 4_000;
+/** How often the terminal is read while waiting for the shell to echo the typed command. */
+export const ECHO_POLL_MS = 50;
+/** How long the shell has to echo the typed command before it is erased unrun. */
+export const ECHO_TIMEOUT_MS = 5_000;
+/** The key that erases one character before the cursor (DEL), in a shell and in a terminal's line editing. */
+const ERASE = "\u007f";
 
 /** A refusal or failure the agent is told about, as the tool's error. */
 export class TerminalToolError extends Error {}
@@ -153,23 +166,19 @@ async function usableSession(ports: AgentTerminalPorts, tab: TabFacts): Promise<
   return session;
 }
 
-function stateLine(tracker: ShellTracker): string {
-  if (tracker.fullScreen()) return "A full-screen program (an editor, a pager or similar) has the terminal.";
-  if (tracker.stoppedMarks()) {
-    return "This shell stopped reporting its prompt and exit codes: the OSC 133 marks came from another shell (one over ssh that has ended, say), and the shell at the prompt now sends none. Whether a command is running is not known.";
-  }
-  if (!tracker.hasIntegration()) {
-    return "This shell does not report its prompt or exit codes (no OSC 133 shell integration), so whether a command is running is not known.";
-  }
-  switch (tracker.phase()) {
-    case "running":
-      return "A command is running.";
-    case "prompt":
-    case "finished":
-      return "The shell is at its prompt.";
-    default:
-      return "Whether a command is running is not known.";
-  }
+function stateLine(tracker: ShellTracker, readiness: Readiness): string {
+  if (readiness.ready === false && readiness.reason === "full-screen") return "A full-screen program (an editor, a pager or similar) has the terminal.";
+  if (readiness.ready === false && readiness.reason === "running") return "A command is running.";
+  const typed = readiness.ready === false && readiness.reason === "typed" ? ` Something is typed there and not run yet ("${readiness.typed}").` : "";
+  if (tracker.hasIntegration() && tracker.phase() === "prompt") return `The shell is at its prompt.${typed}`;
+  const known = tracker.stoppedMarks()
+    ? "This shell stopped reporting its prompt and exit codes: the OSC 133 marks came from another shell (one over ssh that has ended, say), and the shell at the prompt now sends none."
+    : tracker.hasIntegration()
+      ? "The shell's marks do not say it is at a prompt."
+      : "This shell does not report its prompt or exit codes (no OSC 133 shell integration).";
+  if (readiness.ready) return `${known} The terminal shows its prompt, empty.`;
+  if (typed !== "") return `${known}${typed}`;
+  return `${known} The terminal does not show an empty shell prompt, so whether a command is running is not known.`;
 }
 
 /** What the terminal shows now: its last `lines` lines, where the shell is, and its last command. */
@@ -188,7 +197,7 @@ export async function readTerminal(
     const cwd = replay.tracker.cwd();
     const parts = [
       `Terminal ${describeTab(tab)}: the user's own interactive shell.${cwd === null ? "" : ` Its directory is ${cwd}.`}`,
-      stateLine(replay.tracker),
+      stateLine(replay.tracker, promptReadiness(replay.screen.terminal, replay.tracker)),
       describeLast(replay.tracker.last()),
       shown.text === ""
         ? "The terminal shows nothing."
@@ -213,51 +222,148 @@ export function checkCommand(command: string): string {
   return trimmed;
 }
 
+/** Runs one task per terminal at a time, in the order they ask. */
+export class TerminalLocks {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async run<T>(terminalId: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
+    const before = this.tails.get(terminalId) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => (release = resolve));
+    const tail = before.then(() => mine);
+    this.tails.set(terminalId, tail);
+    try {
+      await waitFor(before, signal);
+      return await task();
+    } finally {
+      release();
+      if (this.tails.get(terminalId) === tail) this.tails.delete(terminalId);
+    }
+  }
+}
+
+/** `promise`, or a rejection once `signal` aborts first. */
+function waitFor(promise: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(stopped());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(stopped());
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
+}
+
+function stopped(): TerminalToolError {
+  return new TerminalToolError("Stopped before anything was typed.");
+}
+
+/** The refusal for a terminal that is not waiting at an empty prompt. */
+function notReady(readiness: Exclude<Readiness, { ready: true }>, where: string): TerminalToolError {
+  switch (readiness.reason) {
+    case "full-screen":
+      return new TerminalToolError(`A full-screen program has the terminal ${where}, so nothing was typed. Ask the user to leave it first.`);
+    case "running":
+      return new TerminalToolError(
+        `A command is still running in ${where}, so nothing was typed. Read the terminal again later, or ask the user to stop it.`,
+      );
+    case "typed":
+      return new TerminalToolError(
+        `The user has typed something at the prompt in ${where} and not run it yet ("${readiness.typed}"), so nothing was typed over it.`,
+      );
+    case "no-prompt":
+      return new TerminalToolError(
+        [
+          `Nothing was typed: the terminal ${where} does not plainly show its shell waiting at an empty prompt.`,
+          "This shell does not mark its prompt (OSC 133 shell integration), so a command is typed only at a prompt the shell drew right after reporting its directory (OSC 7),",
+          `ending in ${PROMPT_SIGNS.join(" ")} and a space, with nothing typed after it. A program may be waiting for input there (a password, a question, a REPL), or the prompt has another shape.`,
+          "To fix it: if a program is waiting or something is typed, ask the user to finish or clear it, then try again.",
+          "If the shell is idle and this keeps happening, the user can turn on its shell integration (the OSC 133 script of WezTerm, Ghostty, kitty or iTerm2, or the lines in the Terminals plugin's README),",
+          "or use a prompt that ends in one of those signs and a shell that reports its directory (oh-my-zsh does). Until then, ask the user to run the command themselves.",
+        ].join(" "),
+      );
+  }
+}
+
+/** What `runCommand` needs besides the tab and the command. */
+export interface RunContext {
+  signal: AbortSignal;
+  /** Throws a `TerminalToolError` once the calling chat may no longer type into the tab. */
+  checkAccess(): void;
+  locks: TerminalLocks;
+  makeScreen?: (cols: number, rows: number) => Screen;
+}
+
+/** Throws when the call was stopped or the chat lost the tab. */
+function checkStillWanted(context: RunContext, what: string): void {
+  if (context.signal.aborted) throw new TerminalToolError(`Stopped ${what}.`);
+  context.checkAccess();
+}
+
 /**
- * Types `command` into the tab's shell and waits for it: until the shell
- * says it finished (with shell integration), or its output has been quiet
- * for `QUIET_MS` (without), or `timeoutMs` passes, when it is left running.
+ * Types `command` into the tab's shell, presses Enter once the shell echoed
+ * it, and waits for it: until the shell says it finished (with shell
+ * integration), or its output has been quiet for `QUIET_MS` (without), or
+ * `timeoutMs` passes, when it is left running.
  */
 export async function runCommand(
   ports: AgentTerminalPorts,
   tab: TabFacts,
   options: { command: string; timeoutMs?: number },
-  signal: AbortSignal,
-  makeScreen: (cols: number, rows: number) => Screen = headlessScreen,
+  context: RunContext,
 ): Promise<string> {
   const command = checkCommand(options.command);
   const timeoutMs = Math.max(1_000, Math.min(MAX_RUN_TIMEOUT_MS, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS));
+  return context.locks.run(tab.terminalId, context.signal, () => typeAndWait(ports, tab, command, timeoutMs, context));
+}
+
+async function typeAndWait(ports: AgentTerminalPorts, tab: TabFacts, command: string, timeoutMs: number, context: RunContext): Promise<string> {
+  const { signal } = context;
+  checkStillWanted(context, "before anything was typed");
   const session = await usableSession(ports, tab);
-  const replay = new Replay(ports, tab.terminalId, session, makeScreen);
+  const replay = new Replay(ports, tab.terminalId, session, context.makeScreen ?? headlessScreen);
   try {
     await replay.catchUp(TAIL_BYTES);
     const { tracker } = replay;
+    const terminal = replay.screen.terminal;
     const where = describeTab(tab);
-    if (tracker.fullScreen()) {
-      throw new TerminalToolError(`A full-screen program has the terminal ${where}, so nothing was typed. Ask the user to leave it first.`);
-    }
-    if (tracker.hasIntegration() && tracker.phase() === "running") {
-      throw new TerminalToolError(
-        `A command is still running in ${where}, so nothing was typed. Read the terminal again later, or ask the user to stop it.`,
-      );
-    }
-    const typed = tracker.pendingInput();
-    if (typed !== null && typed !== "") {
-      throw new TerminalToolError(
-        `The user has typed something at the prompt in ${where} and not run it yet ("${typed}"), so nothing was typed over it.`,
-      );
-    }
+    const readiness = promptReadiness(terminal, tracker);
+    if (!readiness.ready) throw notReady(readiness, where);
+    checkStillWanted(context, "before anything was typed");
 
+    // Typing starts at the cursor, which is where the readiness check found the empty prompt.
+    const startMarker = terminal.registerMarker(0);
+    const startColumn = readiness.at.column;
     let finished: FinishedCommand | null = null;
     let timedOut = false;
     const stop = tracker.onFinished((done) => {
       finished ??= done;
     });
-    const buffer = replay.screen.terminal.buffer.active;
-    const startMarker = replay.screen.terminal.registerMarker(0);
-    const startColumn = buffer.cursorX;
+    const buffer = terminal.buffer.active;
     try {
-      await ports.input(tab.terminalId, `${command}\r`);
+      await ports.input(tab.terminalId, command);
+      const echo = await awaitEcho(ports, replay, startMarker, startColumn, command, signal);
+      let refusal: TerminalToolError | null = null;
+      if (echo !== "ok") {
+        refusal =
+          echo === "stopped"
+            ? new TerminalToolError("Stopped before the command was run; what was typed was erased.")
+            : new TerminalToolError(
+                `Nothing was run in ${where}: after typing \`${command}\` the line did not show exactly that command (it showed "${echo.shown}"), so Enter was not pressed and what was typed was erased. The user may have typed at the same moment, or the program there does not echo like a shell. Read the terminal before trying again.`,
+              );
+      } else {
+        try {
+          checkStillWanted(context, "before the command was run; what was typed was erased");
+        } catch (error) {
+          refusal = error as TerminalToolError;
+        }
+      }
+      if (refusal !== null) {
+        await ports.input(tab.terminalId, ERASE.repeat(command.length));
+        throw refusal;
+      }
+      await ports.input(tab.terminalId, "\r");
       ports.announce(tab.terminalId, command);
       const started = ports.now();
       let lastOutputAt = started;
@@ -277,14 +383,15 @@ export async function runCommand(
 
     const done = finished as FinishedCommand | null;
     if (done !== null) {
+      startMarker?.dispose();
       const header = `Ran \`${command}\` in ${where}: it ${exitText(done.exitCode)}.${done.cwd === null ? "" : ` The shell's directory is ${done.cwd}.`}`;
       if (done.output === "") return `${header}\nIt printed nothing.`;
       return `${header}\n${done.truncated ? "The last lines it printed" : "It printed"}:\n\n${fence(done.output)}`;
     }
     const since =
       startMarker === undefined || startMarker.isDisposed
-        ? lastLines(replay.screen.terminal, DEFAULT_READ_LINES)
-        : textBetween(replay.screen.terminal, { line: startMarker.line, column: startColumn }, { line: buffer.length - 1, column: Number.MAX_SAFE_INTEGER });
+        ? lastLines(terminal, DEFAULT_READ_LINES)
+        : textBetween(terminal, { line: startMarker.line, column: startColumn }, { line: buffer.length - 1, column: Number.MAX_SAFE_INTEGER });
     startMarker?.dispose();
     const shown = since.text === "" ? "Nothing has been printed since." : `The terminal since then:\n\n${fence(since.text)}`;
     if (tracker.hasIntegration()) {
@@ -294,5 +401,48 @@ export async function runCommand(
     return `Typed \`${command}\` in ${where}. This shell does not report when a command finishes or its exit code, so this is the terminal ${when}; the command may still be running.\n${shown}`;
   } finally {
     replay.dispose();
+  }
+}
+
+/**
+ * A command line without its backslash escapes. zsh's url-quote-magic (on in
+ * oh-my-zsh) escapes `?`, `&` and the like as a URL is typed, which the shell
+ * reads as the same command.
+ */
+function unescaped(line: string): string {
+  return line.replace(/\\(.)/g, "$1");
+}
+
+/**
+ * Waits for the shell to echo `command` where typing started: "ok" once the
+ * text from there to the cursor is the command (backslash escapes the line
+ * editor added aside), "stopped" when the
+ * call is cancelled, or what the line showed instead once it differs or
+ * `ECHO_TIMEOUT_MS` passes.
+ */
+async function awaitEcho(
+  ports: AgentTerminalPorts,
+  replay: Replay,
+  startMarker: { line: number; isDisposed: boolean } | undefined,
+  startColumn: number,
+  command: string,
+  signal: AbortSignal,
+): Promise<"ok" | "stopped" | { shown: string }> {
+  const terminal = replay.screen.terminal;
+  const deadline = ports.now() + ECHO_TIMEOUT_MS;
+  for (;;) {
+    if (signal.aborted) return "stopped";
+    await replay.catchUp();
+    if (startMarker === undefined || startMarker.isDisposed) return { shown: "" };
+    const buffer = terminal.buffer.active;
+    const shown = textBetween(terminal, { line: startMarker.line, column: startColumn }, { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX })
+      .text.trim();
+    if (unescaped(shown) === unescaped(command)) return "ok";
+    if (!unescaped(command).startsWith(unescaped(shown)) || ports.now() >= deadline) return { shown };
+    try {
+      await ports.sleep(ECHO_POLL_MS, signal);
+    } catch {
+      return "stopped";
+    }
   }
 }

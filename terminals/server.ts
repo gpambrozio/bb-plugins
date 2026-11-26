@@ -5,6 +5,8 @@
 // chosen machine). It runs no shells and relays no output itself: each shell
 // runs under that machine's host daemon, and the app streams it straight from
 // bb (app/connection.ts). See AGENTS.md.
+import { randomUUID } from "node:crypto";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { AGENT_TYPED, MAX_INSTRUCTIONS_LENGTH, normalizeInstructions, type AgentTyped } from "./shared/agent";
@@ -125,6 +127,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
     save: (list) => bb.storage.kv.set(AGENTS_KEY, list),
     now: () => Date.now(),
+    newToken: () => randomUUID(),
   });
   await links.load();
   await loadTabs().catch(() => []);
