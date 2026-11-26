@@ -81,6 +81,13 @@ The colours and font follow bb's theme, as bb's own terminal does.
   asking you to confirm first. Commands it decides to run by itself stay to looking around; it asks
   before anything destructive, slow, or that needs a password.
 - No other thread gets those tools. Letting go of the chat, or closing the tab, takes them away.
+- **You can change what the agent is told.** The gear in the agent panel opens the plugin's settings
+  (Settings → Plugins → Terminals), whose **Agent instructions** section shows the built-in text: edit
+  it, add to it, save, or **Restore the built-in instructions**. Saving an empty text does the same.
+  The plugin always puts one line of its own first, naming the tab and its machine and saying the two
+  tools act on it, so the agent knows its terminal whatever you write. `{{tab}}` and `{{machine}}` in
+  your text become the tab's name and its machine's, in quotes. A change applies to chats started
+  afterwards, and to an existing chat when its agent session next starts.
 
 The agent runs on your own agent provider, so a chat costs what any other bb thread costs.
 
@@ -193,8 +200,8 @@ remembers which sessions are tabs, in which order. The page draws each one with
 terminal connection — the one bb's terminal panel uses — on the page's own origin. No port is opened
 and nothing new listens anywhere.
 
-Nothing is stored but the list of tabs (machine, session id and the name you gave it) and which chat
-helps with which tab. No output, keystroke or credential is written to the plugin's storage or its
+Nothing is stored but the list of tabs (machine, session id and the name you gave it), which chat
+helps with which tab, and your own agent instructions if you changed them. No output, keystroke or credential is written to the plugin's storage or its
 log. What you send an agent, and what its tools read, is in that chat, like any other bb thread.
 
 The agent's tools reach the shell the same way: they read bb's kept output for that one terminal and

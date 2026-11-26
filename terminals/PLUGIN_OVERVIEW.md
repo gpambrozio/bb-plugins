@@ -25,7 +25,8 @@ terminal app does.
   debugging it. The agent knows which terminal you are in and can read it and run commands in it,
   at your prompt where you see them, and no other chat can. Seeing failures needs a shell that marks
   its prompts (fish 4, nushell; the README has lines to add for zsh and bash). The agent runs on your
-  own agent provider, like any bb thread.
+  own agent provider, like any bb thread. What the agent is told can be edited in the plugin's
+  settings, with a way back to the built-in text.
 - Copy on select follows bb's own setting: a finished selection is copied with a "Selection copied"
   notice, and nothing is copied when the setting is off.
 - Colours and font follow bb's theme.
@@ -34,8 +35,8 @@ terminal app does.
 
 Each tab is one of bb's own terminal sessions, run by the chosen machine's bb host daemon, so a shell
 does not depend on the page or the app being open. The page draws it with xterm.js and streams it over
-bb's own terminal connection. No port is opened, and the plugin stores only the list of tabs and which
-chat helps with which tab: never output, keystrokes or credentials.
+bb's own terminal connection. No port is opened, and the plugin stores only the list of tabs, which
+chat helps with which tab and any agent instructions you wrote: never output, keystrokes or credentials.
 
 ## What it needs
 

@@ -71,6 +71,10 @@ export interface AgentDeps {
   cachedTabs(): readonly Tab[];
   ports: AgentTerminalPorts;
   sleep(ms: number): Promise<void>;
+  /** The owner's instructions text as last read (null: the built-in one), for `configure`, which cannot wait. */
+  cachedInstructions(): string | null;
+  /** Reads the owner's instructions text again, so a thread about to start gets the latest. */
+  loadInstructions(): Promise<unknown>;
 }
 
 function tabFacts(tabs: readonly Tab[], terminalId: string): TabFacts | null {
@@ -163,7 +167,11 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     if (typeof terminalId !== "string" || !links.mayUse(terminalId, context.thread.id)) return none;
     const facts = tabFacts(deps.cachedTabs(), terminalId);
     if (facts === null) return none;
-    return { tools: [READ_TOOL, RUN_TOOL], skills: [SKILL], instructions: agentInstructions({ tabLabel: facts.label, hostName: facts.hostName }) };
+    return {
+      tools: [READ_TOOL, RUN_TOOL],
+      skills: [SKILL],
+      instructions: agentInstructions({ tabLabel: facts.label, hostName: facts.hostName }, deps.cachedInstructions()),
+    };
   });
 
   /** The tab's thread when it can still take a message, else null (and the link is dropped). */
@@ -188,6 +196,8 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     async startAgent(terminalId: string, request: Record<string, unknown>): Promise<{ threadId: string }> {
       await requireTab(terminalId);
       const args = spawnArgs(request, terminalId);
+      // Another copy of the plugin (a reload) may have saved them: the new thread's first session reads them.
+      await deps.loadInstructions().catch(() => undefined);
       await links.begin(terminalId);
       let threadId: string;
       try {

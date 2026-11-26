@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 
 import { useProjectPlaces } from "./add-to-chat-dialog";
+import { SETTINGS_PLACE, openPluginSettings } from "./open-settings";
 import { windowAgentPanel, type AgentPanelStore } from "./agent-state";
 import { defaultProject, lastProject, projectForDirectory, type ProjectPlace } from "./project-match";
 
@@ -121,6 +122,18 @@ export function AgentPanel({
             </Button>
           </>
         )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2"
+          aria-label="Agent instructions"
+          onClick={() => {
+            if (!openPluginSettings()) setError(`Could not open the settings: the agent's instructions are in ${SETTINGS_PLACE}.`);
+          }}
+        >
+          <Icon name="Settings" />
+        </Button>
         <Button type="button" variant="ghost" size="sm" className="h-7 px-2" aria-label="Close the agent panel" onClick={onClose}>
           <Icon name="X" />
         </Button>

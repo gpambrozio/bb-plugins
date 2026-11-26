@@ -1275,6 +1275,17 @@ describe("asking an agent", () => {
     );
   });
 
+  it("links to the agent's instructions in the plugin's settings from the panel", async () => {
+    await shown();
+    const pushed: string[] = [];
+    const push = vi.spyOn(window.history, "pushState").mockImplementation((_state, _unused, url) => void pushed.push(String(url)));
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Agent instructions" }));
+    expect(pushed).toEqual(["/settings/plugins/terminals"]);
+    push.mockRestore();
+  });
+
   it("says what the agent typed until the user types", async () => {
     const { view } = await shown("thr_agent");
     await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "git status" });

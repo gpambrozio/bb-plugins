@@ -7,7 +7,7 @@
 // bb (app/connection.ts). See AGENTS.md.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { AGENT_TYPED, type AgentTyped } from "./shared/agent";
+import { AGENT_TYPED, MAX_INSTRUCTIONS_LENGTH, normalizeInstructions, type AgentTyped } from "./shared/agent";
 import { rpcContract } from "./shared/contract";
 import { selectableHosts } from "./shared/host-choice";
 import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "./shared/tabs";
@@ -22,6 +22,8 @@ export type { RpcContract } from "./shared/contract";
 const TABS_KEY = "tabs";
 const CLOSING_KEY = "closing";
 const AGENTS_KEY = "agents";
+/** The owner's instructions text for a tab's agent; absent means the built-in one. */
+const INSTRUCTIONS_KEY = "agentInstructions";
 /** How often a tab closed while its shell was opening is checked on, while there is one. */
 const SETTLE_INTERVAL_MS = 5_000;
 
@@ -143,7 +145,17 @@ export default async function plugin(bb: BbPluginApi) {
     sleep,
     now: () => Date.now(),
   };
+  let cachedInstructions: string | null = null;
+  const loadInstructions = async () => {
+    const stored = await bb.storage.kv.get<unknown>(INSTRUCTIONS_KEY);
+    cachedInstructions = typeof stored === "string" ? normalizeInstructions(stored.slice(0, MAX_INSTRUCTIONS_LENGTH)) : null;
+    return cachedInstructions;
+  };
+  await loadInstructions().catch((error: unknown) => bb.log.warn(`could not read the agent instructions: ${String(error)}`));
+
   const agent = registerAgent(bb, {
+    cachedInstructions: () => cachedInstructions,
+    loadInstructions,
     links,
     tabs: loadTabs,
     cachedTabs: () => cachedTabs,
@@ -181,6 +193,14 @@ export default async function plugin(bb: BbPluginApi) {
       await agent.forgetAgent(terminalId);
       bb.realtime.publish(TABS_CHANGED, {});
       return {};
+    },
+    agentInstructions: async () => ({ text: await loadInstructions() }),
+    setAgentInstructions: async ({ text }) => {
+      const next = normalizeInstructions(text);
+      if (next === null) await bb.storage.kv.delete(INSTRUCTIONS_KEY);
+      else await bb.storage.kv.set(INSTRUCTIONS_KEY, next);
+      cachedInstructions = next;
+      return { text: next };
     },
   });
 

@@ -6,6 +6,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import { MAX_INSTRUCTIONS_LENGTH } from "./agent";
 import { HostChoiceSchema, ListedTabSchema, TabViewSchema } from "./tabs";
 
 const Empty = z.object({});
@@ -50,6 +51,16 @@ export const rpcContract = defineRpcContract({
   },
   /** Lets go of the tab's helper thread: it keeps its chat, and loses the tab's tools. */
   forgetAgent: { input: z.object({ terminalId: z.string().min(1) }), output: Empty },
+  /** The owner's instructions text for a tab's agent; null means the built-in one. */
+  agentInstructions: { input: Empty, output: z.object({ text: z.string().nullable() }) },
+  /**
+   * Saves the owner's instructions text for new agent chats. Null, a blank
+   * text, or the built-in text itself goes back to the built-in one.
+   */
+  setAgentInstructions: {
+    input: z.object({ text: z.string().max(MAX_INSTRUCTIONS_LENGTH).nullable() }),
+    output: z.object({ text: z.string().nullable() }),
+  },
 });
 
 export type RpcContract = typeof rpcContract;

@@ -63,7 +63,7 @@ async function start() {
   await plugin(bb);
   const tab = (await harness.callRpc("open", { hostId: "mini", cols: 80, rows: 24 })) as TabView;
   print(prompt);
-  return { harness, tab, typed, threads, print };
+  return { bb, harness, tab, typed, threads, print };
 }
 
 const request = {
@@ -112,7 +112,7 @@ describe("a tab's agent", () => {
     expect(own.skills).toEqual(["terminals"]);
     // The thread is told where the user is and what its tools reach, since its first message does not quote the terminal.
     expect(own.instructions).toContain("The user is working in a terminal and wants your help with it.");
-    expect(own.instructions).toContain('the terminal tab "Mac mini" on the machine "Mac mini"');
+    expect(own.instructions).toContain('terminal tab "Mac mini" on the machine "Mac mini"');
     expect(own.instructions).toMatch(/`terminal_read` reads what it shows now.*`terminal_run` types one command into it/s);
     // What the user asks it to run goes to that terminal, at once.
     expect(own.instructions).toContain(
@@ -143,6 +143,40 @@ describe("a tab's agent", () => {
     expect(harness.realtimeSignals).toContainEqual(
       expect.objectContaining({ channel: "agent-typed", payload: { terminalId: tab.terminalId, command: "git status" } }),
     );
+  });
+
+  it("gives the tab's thread the owner's instructions after the fixed line, and the built-in ones again once restored", async () => {
+    const { harness, tab } = await start();
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    const resolve = async () =>
+      (
+        await harness.resolveAgentConfiguration(
+          makePluginAgentConfigurationContext({ thread: { id: "thr_1" }, pluginMetadata: { terminalId: tab.terminalId } }),
+        )
+      ).instructions;
+    const builtIn = await resolve();
+    expect(await harness.callRpc("agentInstructions", {})).toEqual({ text: null });
+
+    expect(await harness.callRpc("setAgentInstructions", { text: "  Answer in French. You work in {{tab}}.\n" })).toEqual({
+      text: "Answer in French. You work in {{tab}}.",
+    });
+    expect(await harness.callRpc("agentInstructions", {})).toEqual({ text: "Answer in French. You work in {{tab}}." });
+    expect(await resolve()).toBe(
+      'This chat is attached to the user\'s terminal tab "Mac mini" on the machine "Mac mini": `terminal_read` and `terminal_run` act on that tab.\n\nAnswer in French. You work in "Mac mini".',
+    );
+
+    expect(await harness.callRpc("setAgentInstructions", { text: null })).toEqual({ text: null });
+    expect(await resolve()).toBe(builtIn);
+  });
+
+  it("reads the instructions again before starting a thread, for a copy of the plugin that saved them since", async () => {
+    const { bb, harness, tab } = await start();
+    await bb.storage.kv.set("agentInstructions", "Saved by the other copy.");
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    const resolved = await harness.resolveAgentConfiguration(
+      makePluginAgentConfigurationContext({ thread: { id: "thr_1" }, pluginMetadata: { terminalId: tab.terminalId } }),
+    );
+    expect(resolved.instructions).toContain("Saved by the other copy.");
   });
 
   it("refuses the tools to any other thread, and after the user lets go of the chat", async () => {

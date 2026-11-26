@@ -32,11 +32,13 @@ specific to `terminals`.
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
 | `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7, the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer, what is typed and not run. |
 | `shared/osc7.ts` | The directory an OSC 7 sequence names. |
-| `shared/agent.ts` | What the page tells a tab's agent (the one-line failure prompt, the standing instructions), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
+| `shared/agent.ts` | What the page tells a tab's agent (the one-line failure prompt, the fixed line and the built-in instructions text, filling `{{tab}}` and `{{machine}}`), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
 | `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers. |
 | `server/agent.ts` | `terminal_read` and `terminal_run`, `configure` (the tools for a tab's own thread, the skill for all), and starting, messaging and letting go of a tab's thread. |
 | `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, the state checks before typing, typing and waiting for the command's end (or quiet output without marks). |
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
+| `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
+| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the agent panel's gear), through the router's history. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -147,7 +149,7 @@ bounds what a stuck "+" can start.
 
 **Security.** A shell is the user's own account on that machine, so nothing here widens access: the
 RPCs and the socket are bb's authenticated ones, `open` takes only a connected machine's id, no port
-is opened, and storage and the log hold tab metadata and which thread helps which tab only — never
+is opened, and storage and the log hold tab metadata, which thread helps which tab and the owner's agent instructions only — never
 output, keystrokes or credentials. A
 selection sent with "Add to chat" stays in the window's memory until the chat's composer takes it; it
 is never stored or sent for the user.
@@ -203,6 +205,18 @@ that anything the user asks it to run goes to that terminal through `terminal_ru
 with no confirmation asked first) is
 `agentInstructions`, which `configure` returns for that thread only, so it is there from the first
 turn; the agent reads the command and its output with `terminal_read`.
+
+**The owner can rewrite the instructions, not the line that names the tab.** The settings section
+(`app/agent-instructions-section.tsx`, in plugin storage under `agentInstructions`, not bb's settings
+form: that form has no way back to one field's default) edits the text after one fixed line
+(`FIXED_INSTRUCTIONS`), which names the tab and machine and says the tools act on it, so no text the
+owner writes leaves the agent without its terminal. `{{tab}}` and `{{machine}}` are filled anywhere,
+JSON-quoted since they are the user's own names; other `{{…}}` stay as written. A blank text or the
+built-in text itself is stored as nothing, so a later change to the built-in text reaches an owner who
+never edited it. `configure` is synchronous, so the server caches the text and reads it again before
+each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings
+with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
+has no call for it.
 
 **The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`
 only to a thread whose metadata names a tab *and* that the link store says is that tab's thread (or the
