@@ -150,6 +150,12 @@ export function textBetween(
   return { text: (truncated ? rows.slice(-maxLines) : rows).join("\n"), truncated };
 }
 
+/** The cursor's line up to the cursor: at a shell's prompt, the prompt and what is typed after it. */
+export function lineBeforeCursor(terminal: MarkableTerminal): string {
+  const buffer = terminal.buffer.active;
+  return buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(false, 0, buffer.cursorX) ?? "";
+}
+
 /** The last `count` lines of the whole buffer (scrollback and screen), trailing blank lines dropped. */
 export function lastLines(terminal: MarkableTerminal, count: number): { text: string; truncated: boolean } {
   const buffer = terminal.buffer.active;

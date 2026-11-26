@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INSTRUCTIONS, FAILURE_PROMPT, agentInstructions, normalizeInstructions } from "./agent";
+import { DEFAULT_INSTRUCTIONS, FAILURE_PROMPT, agentInstructions, normalizeInstructions, typingAtOwnPrompt } from "./agent";
 
 const SOURCE = { tabLabel: "build", hostName: "Mac mini" };
 
@@ -40,5 +40,24 @@ describe("normalizeInstructions", () => {
 describe("FAILURE_PROMPT", () => {
   it("is one line that quotes nothing from the terminal", () => {
     expect(FAILURE_PROMPT).toBe("The last command I ran returned an error. Help me debug.");
+  });
+});
+
+describe("typingAtOwnPrompt", () => {
+  it("follows the shell's marks when it sends them", () => {
+    expect(typingAtOwnPrompt({ phase: "running", line: "~ % ", prompt: "~ % " })).toBe(false);
+    expect(typingAtOwnPrompt({ phase: "prompt", line: "Password:", prompt: "~ % " })).toBe(true);
+    expect(typingAtOwnPrompt({ phase: "finished", line: "", prompt: null })).toBe(true);
+  });
+
+  it("without marks, counts a keystroke as the user's own only on the prompt the agent typed at", () => {
+    const prompt = "╰─$ ";
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "╰─$ ", prompt })).toBe(true);
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "╰─$ git sta", prompt })).toBe(true);
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "Password:", prompt })).toBe(false);
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "Overwrite site.conf? [y/N] ", prompt })).toBe(false);
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "", prompt })).toBe(false);
+    // No prompt known (an older server): any keystroke counts, as before.
+    expect(typingAtOwnPrompt({ phase: "unknown", line: "Password:", prompt: null })).toBe(true);
   });
 });

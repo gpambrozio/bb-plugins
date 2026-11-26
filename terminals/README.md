@@ -89,7 +89,10 @@ The colours and font follow bb's theme, as bb's own terminal does.
   a note in the terminal's top right corner, set off in bb's accent colour, lists what the agent ran
   there since you last typed: the last three commands, newest last, with **Show all** to list every one
   (up to a quarter of the terminal's height, scrolling beyond that) and **Show fewer** to fold it back.
-  It goes away when you type in that terminal, and the tab's icon is the bot until then. It never types while a command is running, into a full-screen
+  It goes away when you type at your own prompt in that terminal, and the tab's icon is the bot until
+  then. Typing a password or an answer into a command the agent started (`sudo`, a y/n question) keeps
+  it. On a shell without the marks below, "your own prompt" is a line that starts like the prompt the
+  agent typed at. It never types while a command is running, into a full-screen
   program (an editor, a pager), or over something you have typed and not run yet. A command still
   running after its wait (30 seconds unless the agent asks for longer) is left running.
 - **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without

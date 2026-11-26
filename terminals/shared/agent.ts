@@ -5,12 +5,17 @@
  */
 import { z } from "zod";
 
-import type { FinishedCommand } from "./shell-marks";
+import type { FinishedCommand, ShellPhase } from "./shell-marks";
 
 /** Published when the agent typed a command into a tab, so every window showing it can say so. */
 export const AGENT_TYPED = "agent-typed";
 
-export const AgentTypedSchema = z.object({ terminalId: z.string().min(1), command: z.string() });
+export const AgentTypedSchema = z.object({
+  terminalId: z.string().min(1),
+  command: z.string(),
+  /** The prompt the agent typed at (the cursor's line before the command), to tell the user's own prompt from a command's question. */
+  prompt: z.string().nullable().optional(),
+});
 
 export type AgentTyped = z.infer<typeof AgentTypedSchema>;
 
@@ -78,6 +83,23 @@ function fill(text: string, source: PromptSource): string {
 export function agentInstructions(source: PromptSource, custom: string | null = null): string {
   const text = custom === null || custom.trim() === "" ? DEFAULT_INSTRUCTIONS : custom.trim();
   return `${fill(FIXED_INSTRUCTIONS, source)}\n\n${fill(text, source)}`;
+}
+
+/**
+ * Whether a keystroke the user just sent goes to their own shell prompt, which
+ * means they have moved on from what the agent ran (the "agent ran" list
+ * clears), rather than to a command the agent started: a password for
+ * `sudo`, a y/n answer. With shell-integration marks the shell says so: a
+ * running command takes the keystroke. Without them, the keystroke is at the
+ * prompt when the cursor's line starts with the prompt the agent typed at
+ * ("Password:" or "[y/N]" does not). With no prompt known, any keystroke counts.
+ */
+export function typingAtOwnPrompt(options: { phase: ShellPhase; line: string; prompt: string | null }): boolean {
+  if (options.phase === "running") return false;
+  if (options.phase === "prompt" || options.phase === "finished") return true;
+  const prompt = options.prompt?.trim() ?? "";
+  if (prompt === "") return true;
+  return options.line.trimStart().startsWith(prompt);
 }
 
 /** Exit codes that are the user stopping a command (Ctrl-C), not a failure to ask about. */

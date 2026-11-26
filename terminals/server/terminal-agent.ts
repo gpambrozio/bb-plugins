@@ -14,7 +14,7 @@
  */
 import { Terminal } from "@xterm/headless";
 
-import { lastLines, ShellTracker, textBetween, type FinishedCommand, type MarkableTerminal } from "../shared/shell-marks";
+import { lastLines, lineBeforeCursor, ShellTracker, textBetween, type FinishedCommand, type MarkableTerminal } from "../shared/shell-marks";
 
 /** The parts of a bb terminal session this file reads. */
 export interface SessionFacts {
@@ -33,7 +33,8 @@ export interface AgentTerminalPorts {
   }>;
   input(terminalId: string, data: string): Promise<void>;
   /** Tells the page the agent typed `command` into the terminal, so it can say so. */
-  announce(terminalId: string, command: string): void;
+  /** Tells the page the agent typed `command`, at `prompt` (the cursor's line before it). */
+  announce(terminalId: string, command: string, prompt: string): void;
   sleep(ms: number, signal: AbortSignal): Promise<void>;
   now(): number;
 }
@@ -256,9 +257,10 @@ export async function runCommand(
     const buffer = replay.screen.terminal.buffer.active;
     const startMarker = replay.screen.terminal.registerMarker(0);
     const startColumn = buffer.cursorX;
+    const prompt = lineBeforeCursor(replay.screen.terminal);
     try {
       await ports.input(tab.terminalId, `${command}\r`);
-      ports.announce(tab.terminalId, command);
+      ports.announce(tab.terminalId, command, prompt);
       const started = ports.now();
       let lastOutputAt = started;
       while (finished === null) {

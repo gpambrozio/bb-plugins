@@ -19,6 +19,8 @@ export interface AgentSeed {
 export interface AgentTypedNote {
   command: string;
   at: number;
+  /** The prompt it was typed at, when the server said (see `typingAtOwnPrompt`). */
+  prompt?: string | null;
 }
 
 /** The most commands a tab's note keeps; older ones are dropped. */
@@ -63,9 +65,10 @@ export function createAgentPanelStore() {
       seeds.delete(terminalId);
       set({ ...state, seeds });
     },
-    noteTyped(terminalId: string, command: string, at: number) {
+    noteTyped(terminalId: string, command: string, at: number, prompt: string | null = null) {
       const typed = new Map(state.typed);
-      typed.set(terminalId, [...(state.typed.get(terminalId) ?? []), { command, at }].slice(-MAX_TYPED_NOTES));
+      const note: AgentTypedNote = prompt === null ? { command, at } : { command, at, prompt };
+      typed.set(terminalId, [...(state.typed.get(terminalId) ?? []), note].slice(-MAX_TYPED_NOTES));
       set({ ...state, typed });
     },
     clearTyped(terminalId: string) {

@@ -19,7 +19,7 @@ import {
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
-import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure } from "../shared/agent";
+import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure, typingAtOwnPrompt } from "../shared/agent";
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
 import type { FinishedCommand, ShellPhase } from "../shared/shell-marks";
@@ -238,7 +238,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const agentRow = useRef<HTMLDivElement | null>(null);
   useRealtime(AGENT_TYPED, (payload: unknown) => {
     const parsed = AgentTypedSchema.safeParse(payload);
-    if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId, parsed.data.command, Date.now());
+    if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId, parsed.data.command, Date.now(), parsed.data.prompt ?? null);
   });
 
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -695,12 +695,14 @@ function TerminalView({
   const failed =
     onAsk !== null && isAskableFailure(shell.last) && shell.phase !== "running" && !windowAgentPanel.isDismissed(shell.last) ? shell.last : null;
 
-  // The note that the agent typed here, and the offer for a failed command, last until the user types
-  // here: they have moved on (an offer replayed after a reload included).
+  // The note that the agent typed here lasts until the user types at their own prompt: not a password
+  // or an answer typed into a command the agent started (`typingAtOwnPrompt`). The offer for a failed
+  // command lasts until the user types at all: they have moved on (an offer replayed after a reload included).
   useEffect(() => {
     if (terminal === null) return;
     return terminal.onUserInput(() => {
-      windowAgentPanel.clearTyped(terminalId);
+      const prompt = windowAgentPanel.get().typed.get(terminalId)?.at(-1)?.prompt ?? null;
+      if (typingAtOwnPrompt({ phase: terminal.phase(), line: terminal.lineBeforeCursor(), prompt })) windowAgentPanel.clearTyped(terminalId);
       const last = terminal.lastCommand();
       if (isAskableFailure(last) && !windowAgentPanel.isDismissed(last)) windowAgentPanel.dismiss(last);
     });

@@ -15,7 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { forwardLateImeInput } from "./bb-late-ime/terminal-late-ime-input";
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
-import { ShellTracker, type FinishedCommand, type ShellPhase } from "../shared/shell-marks";
+import { lineBeforeCursor, ShellTracker, type FinishedCommand, type ShellPhase } from "../shared/shell-marks";
 import { currentFontFamily, currentTheme } from "./theme";
 import { rememberViewport, restoreViewport, type ViewportPlace } from "./viewport";
 
@@ -56,6 +56,8 @@ export interface LiveTerminal {
   onShellChange(listener: () => void): () => void;
   /** Calls `listener` on each keystroke the user sends from this window; returns the unsubscribe. */
   onUserInput(listener: () => void): () => void;
+  /** The cursor's line up to the cursor (at a prompt: the prompt and what is typed). */
+  lineBeforeCursor(): string;
 }
 
 /**
@@ -219,6 +221,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       userInputListeners.add(listener);
       return () => userInputListeners.delete(listener);
     },
+    lineBeforeCursor: () => lineBeforeCursor(term),
     dispose() {
       shown = false;
       listeners.clear();

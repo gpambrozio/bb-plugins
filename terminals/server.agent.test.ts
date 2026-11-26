@@ -188,7 +188,7 @@ describe("a tab's agent", () => {
     expect(text(ran)).toContain("On branch main");
     expect(typed).toEqual(["git status\r"]);
     expect(harness.realtimeSignals).toContainEqual(
-      expect.objectContaining({ channel: "agent-typed", payload: { terminalId: tab.terminalId, command: "git status" } }),
+      expect.objectContaining({ channel: "agent-typed", payload: { terminalId: tab.terminalId, command: "git status", prompt: "~ % " } }),
     );
   });
 

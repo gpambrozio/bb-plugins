@@ -249,7 +249,12 @@ line plus Enter through `terminals.input` and polls `terminals.output` from the 
 shell's `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left
 running). Each command it types is published on `agent-typed`; the page lists those since the user last typed
 (`app/agent-ran-note.tsx`, at most 100 kept per tab) and turns the tab's icon into the bot until the
-user types there. The note is an opaque card with bb's `timeline-accent` border and icon (in bb's theme
+user types at their own prompt (`typingAtOwnPrompt`). A keystroke into a command the agent started (a
+`sudo` password, a y/n answer) must not clear it: the owner lost the first two of six commands that way.
+With marks the phase decides ("running" keeps the list). Without them the tool has already returned on
+quiet output at `Password:`, so `agent-typed` carries the cursor's line before the command (the prompt)
+and a keystroke clears only when the cursor's line starts with it again; with no prompt known (an older
+server) any keystroke clears, as before. The note is an opaque card with bb's `timeline-accent` border and icon (in bb's theme
 since 0.48.1, both modes), since a quiet one blended into terminal text. Exit 130 (Ctrl-C) is not offered as a
 failure. The offer for a failure also goes away when the user types: a reload replays bb's buffer, and
 with it the last failure.

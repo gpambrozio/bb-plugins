@@ -33,6 +33,7 @@ function shell(options: {
   const chunks: { seq: number; dataBase64: string }[] = [];
   const typed: string[] = [];
   const announced: string[] = [];
+  const prompts: string[] = [];
   let clock = 0;
   const timers: { at: number; output: string }[] = [];
   const print = (text: string) => chunks.push({ seq: chunks.length, dataBase64: Buffer.from(text).toString("base64") });
@@ -51,7 +52,10 @@ function shell(options: {
         else timers.push({ at: clock + reply.after!, output: reply.output });
       }
     },
-    announce: (_terminalId, command) => void announced.push(command),
+    announce: (_terminalId, command, prompt) => {
+      announced.push(command);
+      prompts.push(prompt);
+    },
     sleep: async (ms) => {
       clock += ms;
       for (const timer of timers.splice(0)) {
@@ -61,7 +65,7 @@ function shell(options: {
     },
     now: () => clock,
   };
-  return { ports, print, typed, announced, elapsed: () => clock };
+  return { ports, print, typed, announced, prompts, elapsed: () => clock };
 }
 
 const never = new AbortController().signal;
@@ -119,6 +123,8 @@ describe("runCommand", () => {
     const text = await runCommand(terminal.ports, TAB, { command: "npm test" }, never);
     expect(terminal.typed).toEqual(["npm test\r"]);
     expect(terminal.announced).toEqual(["npm test"]);
+    // With the prompt it was typed at, so the page can tell the user's prompt from a command's question.
+    expect(terminal.prompts).toEqual(["~/app % "]);
     expect(text).toContain('Ran `npm test` in "Mac mini": it failed with exit code 1.');
     expect(text).toContain("> test\nError: 2 failed");
   });

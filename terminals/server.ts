@@ -141,8 +141,8 @@ export default async function plugin(bb: BbPluginApi) {
     input: async (terminalId, data) => {
       await bb.sdk.terminals.input({ terminalId, dataBase64: Buffer.from(data, "utf8").toString("base64") });
     },
-    announce: (terminalId, command) => {
-      const payload: AgentTyped = { terminalId, command };
+    announce: (terminalId, command, prompt) => {
+      const payload: AgentTyped = { terminalId, command, prompt };
       bb.realtime.publish(AGENT_TYPED, payload);
     },
     sleep,

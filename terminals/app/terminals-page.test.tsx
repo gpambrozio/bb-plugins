@@ -33,6 +33,8 @@ const terminals = vi.hoisted(() => {
     phase: ShellPhase;
     shellListeners: Set<() => void>;
     inputListeners: Set<() => void>;
+    /** The cursor's line up to the cursor, as `lineBeforeCursor` gives it. */
+    line: string;
   }
   const entries = new Map<string, Entry>();
   function entry(terminalId: string) {
@@ -50,6 +52,7 @@ const terminals = vi.hoisted(() => {
         phase: "unknown",
         shellListeners: new Set(),
         inputListeners: new Set(),
+        line: "",
       };
       entries.set(terminalId, found);
     }
@@ -149,6 +152,7 @@ vi.mock("./live-terminals", () => ({
         found.inputListeners.add(listener);
         return () => found.inputListeners.delete(listener);
       },
+      lineBeforeCursor: () => found.line,
     };
   },
   releaseClosedTerminals: (open: ReadonlySet<string>) => {
@@ -1372,6 +1376,45 @@ describe("asking an agent", () => {
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
     act(() => terminals.type("term_1"));
     await waitFor(() => expect(screen.queryByText(/The agent ran/)).toBeNull());
+  });
+
+  it("keeps the list while the user answers a command the agent started (a sudo password), on a shell without marks", async () => {
+    // The owner's sequence: their zsh sends no OSC 133, so the tool returned at sudo's quiet "Password:".
+    const { view } = await shown("thr_agent");
+    const typed = (command: string) => view.emitRealtime("agent-typed", { terminalId: "term_1", command, prompt: "╰─$ " });
+    await typed("lsof -nP -iTCP -sTCP:LISTEN");
+    await typed("sudo lsof -nP -iTCP -sTCP:LISTEN");
+    const entry = terminals.entry("term_1");
+    entry.line = "Password:";
+    act(() => terminals.type("term_1"));
+    act(() => terminals.type("term_1"));
+    expect(await screen.findByText("The agent ran 2 commands")).toBeTruthy();
+
+    entry.line = "╰─$ ";
+    for (const command of ["ps -o pid,command -ww -p 1946,79402", "grep -l ftp-proxy x.plist", "plutil -p x.plist", "launchctl print-disabled system"]) {
+      await typed(command);
+    }
+    const note = screen.getByRole("status", { name: "Commands the agent ran" });
+    expect(within(note).getByText("The agent ran 6 commands")).toBeTruthy();
+    fireEvent.click(within(note).getByRole("button", { name: "Show all 6" }));
+    expect(within(note).getAllByRole("listitem")[1]?.textContent).toContain("sudo lsof -nP -iTCP -sTCP:LISTEN");
+
+    // Typing at their own prompt afterwards is moving on: the list goes.
+    act(() => terminals.type("term_1"));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull());
+  });
+
+  it("keeps the list while a command the agent started runs, on a shell with marks, and clears it at the prompt", async () => {
+    const { view } = await shown("thr_agent");
+    await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "sudo make install", prompt: "~ % " });
+    act(() => terminals.setPhase("term_1", "running"));
+    terminals.entry("term_1").line = "Password:";
+    act(() => terminals.type("term_1"));
+    expect(await screen.findByText("The agent ran")).toBeTruthy();
+    act(() => terminals.setPhase("term_1", "prompt"));
+    terminals.entry("term_1").line = "~ % ";
+    act(() => terminals.type("term_1"));
+    await waitFor(() => expect(screen.queryByText("The agent ran")).toBeNull());
   });
 
   it("lists the agent's last three commands, newest last, and all of them on request, until the user types", async () => {

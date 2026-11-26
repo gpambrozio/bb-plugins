@@ -17,7 +17,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The agent can look and try things itself.** That chat can read what the terminal shows and run
   commands in it, at your prompt, where you see them, and gets back their output and exit code. A note
   in the terminal's corner, in bb's accent colour, lists the last three commands it ran there, with a
-  button to show them all, until you type in the terminal again. It never types while a command runs, into an editor or
+  button to show them all, until you type at your own prompt there again: a password or an answer typed
+  into a command the agent started does not clear it. It never types while a command runs, into an editor or
   other full-screen program, or over something you typed and have not run. Ask it to run something
   and it runs it there, in your terminal, without asking you to confirm first.
 - **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty
