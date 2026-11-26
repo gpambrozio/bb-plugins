@@ -1,142 +1,90 @@
-# bb-plugin-code-mode
+# Code Mode (code-mode)
 
-A BB plugin that keeps a todo list. It shows every surface a plugin can own:
+Run the Claude Code threads you choose in Claude Code's experimental Code Mode, one thread at a time,
+with no environment variable to set and no bb restart.
 
-- `server.ts` — the backend: a todo store in `bb.storage.kv`, RPC methods
-  for the page, a `bb code-mode` CLI command, a setting, and a realtime signal
-  that keeps every open page current.
-- `app.tsx` — the frontend: an **Example todos** page in the left sidebar
-  (`app.slots.navPanel`) built from the vendored components.
-- `skills/example-todos/SKILL.md` — a skill that tells agents how to keep the list
-  with `bb code-mode`. BB imports it into agent threads automatically.
-- `PLUGIN_OVERVIEW.md` — the store listing text: a longer version of
-  `bb.description` that the plugin detail page shows under it. See
-  [Store listing](#store-listing).
+In Code Mode, Claude writes a short script that reads files, runs commands and calls tools in one go,
+instead of one tool call per step. bb has no switch for it: Claude Code takes Code Mode for an Agent SDK
+session (the way bb runs a thread) only from the `env` block of its `--settings`, and bb's settings for
+Claude Code have no `env`. This plugin hands bb a small wrapper as the thread's Claude Code executable,
+for the threads that chose Code Mode only. The wrapper adds Code Mode to the settings bb passes and runs
+the real `claude`.
 
-Try it: install the plugin, open **Example todos** in the sidebar, then run
-`bb code-mode add "Ship it"` in a terminal. The page updates at once.
+![Send in Code Mode, the thread working, and its Code badge](docs/screenshots/send-in-code-mode.gif)
 
-## UI components
+## Using it
 
-`components/ui/` is vendored source you own (the shadcn model): edit the
-files freely — they never update out from under you. Add more from the BB
-component registry (the full shadcn set, version-matched to your BB install
-via the pinned ref in `components.json`):
+- **Send in Code Mode.** In a new thread, the menu beside the Send button has **Send in Code Mode**. It
+  sends the first message and starts the thread in Code Mode. It is greyed out for agents other than
+  Claude Code and for models that can't run Code Mode.
+- **The choice is fixed.** A thread decides on its first message and keeps that for good: a session
+  started in Code Mode can only resume in Code Mode, and one started without it only without.
+- **Defaults.** On the plugin's settings page, turn on **Projects that start in Code Mode**; new Claude
+  Code threads there start in Code Mode without the menu.
+- **Threads that agents and plugins start** (a crewmate, a child thread, a plugin's thread) follow the
+  setting of that name: the project's default (the default), never, or the same as the thread that
+  started them.
+- **Forks** take the choice of the thread they were forked from.
+- **Which machines.** Code Mode runs only on the machines you turn on, under **Machines** on the settings
+  page. All are off until you do. Leave a machine off when its Claude Code account can't use Code Mode:
+  Claude Code refuses it for an organization under HIPAA, for one, and then starts with the ordinary
+  tools. Turning a machine on writes the wrapper there and says whether that worked.
+- **Models.** Code Mode works with Opus 5.5, Sonnet 5.5, Fable 5.2 and later models. A message that would
+  move a Code Mode thread to another model is refused with the reason, because the thread could not
+  resume on it. Switch the thread back and send again.
+- **Seeing it.** A Code Mode thread shows a **Code** badge on its row in the thread list (when the list
+  shows metadata: Organize → Rows → Metadata), and **Code Mode: on · Fixed for this thread** in its
+  thread menu.
 
-```
-npx shadcn add @bb/select @bb/table
-```
+Threads that existed before you installed the plugin are never touched.
 
-Run `npm install` once before `bb plugin build` — the vendored components'
-npm deps bundle into your dist. React, and BB-shimmed packages like the
-radix portal primitives and `sonner` (`import { toast } from "sonner"`
-reaches BB's own toaster), are provided by the BB app at runtime and never
-bundled. Every shimmed package is declared in `devDependencies` at the
-host's version so those imports typecheck; keep them there (never in
-`dependencies`, which would bundle a second copy), and `bb plugin types`
-repins declared packages alongside the SDK; unused packages may be removed. Ship `dist/` (npm tarball or committed for
-git installs) so people installing your plugin never need npm.
+| The Send menu | A Code Mode thread |
+| --- | --- |
+| ![Send in Code Mode in the Send menu](docs/screenshots/send-menu-light.png) | ![The Code badge on the rows and the thread menu's line](docs/screenshots/thread-menu.png) |
 
-## Manifest
+The settings page ([dark](docs/screenshots/settings-dark.png)):
 
-`package.json` is the plugin manifest. Notable fields:
+![Machines, projects and the spawned-threads setting](docs/screenshots/settings-light.png)
 
-- `bb.server` — backend entry (required).
-- `bb.app` — frontend entry. Delete it, `app.tsx`, `components/`,
-  `hooks/`, and `lib/` for a headless plugin.
-- `bb.skills` — skill roots; omitted here, so BB reads `skills/`. Each
-  directory with a `SKILL.md` is one skill, named after the directory.
-- `bb.name` and `bb.description` — required human-facing identity.
-- `bb.branding` — required; declare `icon` as a BB icon name or a
-  plugin-relative compact SVG, or declare `logo.light` (with optional
-  `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
-  `.webp` files.
-- `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — the lowest plugin SDK you need (scaffold:
-  `>=0.6.157`). BB reads this as a floor, not a ceiling: a later
-  SDK in the same major still loads your plugin.
-- `dependencies` — every package your source imports that BB does not provide.
-  `bb plugin build` inlines them into `dist/`, and git installs resolve this
-  list alone, so a build-required package here rather than in
-  `devDependencies` is what keeps your plugin installable. `devDependencies`
-  is for types and tooling only (BB shims React, the portal primitives, and
-  `@get-bb/plugin-sdk` at runtime — never bundle them).
+## If the plugin is off or fails
 
-Run `bb plugin build` before publishing git/npm installs. It writes
-`dist/server.js` + `server.meta.json` and `app.js` / `app.css` /
-`app.meta.json`. Each `*.meta.json` stamps SDK major/version,
-`artifactFormatVersion`, `pluginId`, `pluginVersion`, and
-`builtWith` so managed installs can verify the artifacts. `app.meta.json`
-also lists `runtimeSlots`, the shimmed host modules the bundle imports.
+**A Code Mode thread can't resume without this plugin.** If the plugin is turned off, removed, or fails
+to load, the next message to a Code Mode thread fails with "This session was started in Code Mode
+(experimental), which is off in this run, so it can't be resumed". The same happens if the wrapper
+can't be written on that thread's machine.
 
-## Store listing
+To recover a thread once the plugin is back:
 
-Two texts describe the plugin in the store. `bb.description` in package.json
-is the one-sentence hook on every browse card and the lead paragraph on the
-detail page; keep it under about 140 characters. `PLUGIN_OVERVIEW.md` is the
-same claim at length, shown in an Overview section under that paragraph.
-Rewrite the scaffold's copy for your plugin, and update it whenever
-`bb.description` changes, so the two never disagree.
+1. Stop the thread (its Stop button, or `bb thread stop <id>`).
+2. Send a new message.
 
-The submission to the public BB Community marketplace requires the file. Keep
-it under 4000 characters (aim for 700 to 1800) and use headings, paragraphs,
-emphasis, code, blockquotes, lists, thematic breaks, and absolute https links
-only — raw HTML, images, tables, footnotes, and task lists are rejected. Do
-not open with a `#` title or repeat `bb.description` verbatim; the page
-shows both directly above.
+Turning the plugin back on alone is not enough: bb keeps the executable it picked for a running thread
+until the thread stops. **Try again** on the failed message sends "Please continue." rather than your
+message, so send your message again after recovering.
+
+The same steps recover a Code Mode thread that was moved to an older model outside bb's send (for
+example with `bb thread update --model`): set a supported model, stop the thread, and send a new message.
+
+## Good to know
+
+- **Code Mode is experimental**, in Claude Code and in bb's plugin API this uses. Either can change.
+- **bb shows the script's steps as ordinary rows** ("Explored 3 files, ran 2 commands"); the script itself
+  is not shown.
+- **Sandboxing:** with bb's sandbox on, the sandbox covers the shell commands a script runs, not the
+  script itself or its file, web and tool calls.
+- **Don't combine it with a global wrapper** set through `bb-app env set BB_CLAUDE_CODE_EXECUTABLE`; the
+  plugin's choice wins for its threads, which is confusing.
+- **macOS and Linux machines only.** The wrapper is a shell script run with bb's own Node; it needs no
+  Python.
+- The wrapper logs one line per Claude Code launch in `wrapper.log` beside it, in the plugin's host-data
+  folder on each machine (`~/.bb/plugins/code-mode/host-data/` on the bb server's Mac). It records the
+  time, the thread and session ids and its decision, never the arguments or environment.
 
 ## Install
 
-From this directory (`bb plugin new` already ran the install; a fresh clone
-needs it):
-
-```
-npm install
-bb plugin install .
+```bash
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin code-mode --tag-prefix code-mode/
 ```
 
-After editing sources, reload:
-
-```
-bb plugin reload code-mode
-```
-
-Or let `bb plugin dev` rebuild and reload on every save.
-
-## Configure
-
-```
-bb plugin config code-mode
-bb plugin config code-mode set showDone false
-bb plugin reload code-mode
-```
-
-## Types & API reference
-
-The plugin API ships as the npm package `@get-bb/plugin-sdk`, pinned to an
-exact version in `devDependencies` (`0.6.157` — the SDK of the BB
-that scaffolded this plugin). After `npm install`, the full surface is on disk
-at:
-
-```
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk.d.ts      # backend
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk-app.d.ts  # frontend
-```
-
-Your editor and `tsc` resolve `@get-bb/plugin-sdk` there through ordinary node
-resolution — no path mapping. These are readable declarations: open them for an
-exact signature.
-
-The SDK surface grows with every BB release, so the pin has to track the BB you
-actually run:
-
-```
-bb plugin types          # sync this plugin's SDK surface to the running BB
-bb plugin types --check  # CI: fail when it does not match
-```
-
-Ask BB to write plugins for you: the `bb-plugin-authoring` skill documents
-the whole surface with examples.
-
-Confused by the API, or need something the types don't explain? Clone the BB
-repo and read the source: <https://github.com/get-bb/bb>.
+Needs bb 0.50 or later; tested with bb 0.50.1 and Claude Code 2.1.332. Then open **Settings → Plugins → Code Mode**
+and turn on the machines that may run Code Mode.

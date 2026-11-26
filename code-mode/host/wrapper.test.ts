@@ -88,26 +88,33 @@ describe("decide", () => {
     expect(wrapper.decide([...SDK, "--resume", "s-on"], {}, home())).toMatchObject({ decision: "on", reason: "resumed Code Mode session", session: "s-on" });
   });
 
-  it("resumes a session that started without Code Mode as it started", () => {
-    transcript(home(), "s-off", [{ type: "user" }, { type: "assistant" }]);
-    expect(wrapper.decide([...SDK, "--resume=s-off"], {}, home())).toMatchObject({ decision: "pass", reason: "resumed session started without Code Mode" });
+  it("resumes a session marked without Code Mode as it started", () => {
+    transcript(home(), "s-off", [{ type: "user" }, { type: "repl-mode", replMode: false }]);
+    expect(wrapper.decide([...SDK, "--resume=s-off"], {}, home())).toMatchObject({ decision: "pass", reason: "resumed session marked without Code Mode" });
     transcript(home(), "s-turned-off", [{ type: "repl-mode", replMode: true }, { type: "repl-mode", replMode: false }]);
     expect(wrapper.decide([...SDK, "--resume", "s-turned-off"], {}, home()).decision).toBe("pass");
   });
 
+  it("turns Code Mode on for a fork's copy of a Code Mode session, which has no marker", () => {
+    // What bb's fork writes before its first launch (bb 0.50.1): the conversation, REPL calls included,
+    // and no repl-mode entry. Claude Code turns Code Mode on for it when the flag is set.
+    transcript(home(), "fork", [{ type: "user" }, { type: "assistant", message: { content: [{ type: "tool_use", name: "REPL" }] } }]);
+    expect(wrapper.decide([...SDK, "--resume", "fork"], {}, home())).toMatchObject({ decision: "on", reason: "resumed session with no Code Mode marker" });
+  });
+
   it("turns Code Mode on for a resume with no transcript", () => {
-    expect(wrapper.decide([...SDK, "--resume", "gone"], {}, home())).toMatchObject({ decision: "on", reason: "resumed session, no transcript found" });
+    expect(wrapper.decide([...SDK, "--resume", "gone"], {}, home())).toMatchObject({ decision: "on", reason: "resumed session with no Code Mode marker" });
   });
 
   it("reads transcripts from CLAUDE_CONFIG_DIR", () => {
     const config = join(root, "config");
     mkdirSync(join(config, "projects", "p"), { recursive: true });
-    writeFileSync(join(config, "projects", "p", "s.jsonl"), `${JSON.stringify({ type: "user" })}\n`);
+    writeFileSync(join(config, "projects", "p", "s.jsonl"), `${JSON.stringify({ type: "repl-mode", replMode: false })}\n`);
     expect(wrapper.decide([...SDK, "--resume", "s"], { CLAUDE_CONFIG_DIR: config }, home()).decision).toBe("pass");
   });
 
   it("never looks up a session id that could leave the projects folder", () => {
-    expect(wrapper.startedInCodeMode("../../etc/passwd", {}, home())).toBeNull();
+    expect(wrapper.codeModeMarker("../../etc/passwd", {}, home())).toBeNull();
   });
 });
 

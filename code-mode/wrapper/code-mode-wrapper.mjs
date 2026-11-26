@@ -8,9 +8,12 @@
 // Claude Code takes the Code Mode opt-in for an Agent SDK session (the way bb runs a thread) only from
 // the env block of its --settings JSON; a process variable is ignored. So for an SDK session this adds
 // env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE="1" to the --settings JSON bb passes (or adds a --settings).
-// A resumed session gets the flag only when its transcript says it started in Code Mode, or when there
-// is no transcript; one that started without Code Mode resumes as it started. Anything else (--version,
-// doctor, update, auth) passes through unchanged.
+// A resumed session gets the flag too, unless its transcript's last Code Mode marker says it is off
+// (Claude Code could not run it there, and that session resumes as it started). A transcript with no
+// marker gets it: a fork's copy of a Code Mode session has none (bb forks through the Agent SDK, which
+// copies the conversation but not the marker), and Claude Code turns Code Mode on for such a session
+// when the flag is set. Only threads the plugin put in Code Mode reach this wrapper, so an ordinary
+// session never comes here. Anything else (--version, doctor, update, auth) passes through unchanged.
 //
 // It cannot exec, so it prints a plan, and the launcher execs the real claude:
 //   line 1  the real claude's path, or nothing when none was found
@@ -49,8 +52,8 @@ export function isSdkSession(args) {
   return optionValue(args, "--input-format")?.value === "stream-json";
 }
 
-/** True or false from the session's transcript, null when there is none. */
-export function startedInCodeMode(sessionId, env, home) {
+/** The session's last Code Mode marker (true or false), or null when it has none or no transcript. */
+export function codeModeMarker(sessionId, env, home) {
   if (!SESSION_ID.test(sessionId)) return null;
   const projects = join(env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "projects");
   let folders;
@@ -62,7 +65,7 @@ export function startedInCodeMode(sessionId, env, home) {
   for (const folder of folders) {
     const path = join(projects, folder, `${sessionId}.jsonl`);
     if (!existsSync(path)) continue;
-    let state = false;
+    let state = null;
     for (const line of readFileSync(path, "utf8").split("\n")) {
       if (!line.includes('"repl-mode"')) continue;
       try {
@@ -97,9 +100,9 @@ export function decide(args, env, home) {
   if (!isSdkSession(args)) return { plan: { action: "pass" }, decision: "pass", reason: "not an SDK session", session: null };
   const session = optionValue(args, "--resume")?.value ?? null;
   if (session !== null) {
-    const wasOn = startedInCodeMode(session, env, home);
-    if (wasOn === false) return { plan: { action: "pass" }, decision: "pass", reason: "resumed session started without Code Mode", session };
-    return { plan: withFlag(args), decision: "on", reason: wasOn ? "resumed Code Mode session" : "resumed session, no transcript found", session };
+    const marker = codeModeMarker(session, env, home);
+    if (marker === false) return { plan: { action: "pass" }, decision: "pass", reason: "resumed session marked without Code Mode", session };
+    return { plan: withFlag(args), decision: "on", reason: marker ? "resumed Code Mode session" : "resumed session with no Code Mode marker", session };
   }
   return { plan: withFlag(args), decision: "on", reason: "new session", session: null };
 }

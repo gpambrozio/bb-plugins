@@ -317,6 +317,18 @@ What a port only learns by running it:
   which push notifications and Herald announce.
 - **`fileChange` paths in the event log are absolute**, and on macOS Claude Code reports `/private/var/…`
   for a workspace bb knows as `/var/…` (`learning-exercises/server/signals.ts`, `relativize`).
+- **A plugin can set another provider's environment, per thread.**
+  `bb.providers.experimental_contributeEnv(providerId, resolve)` runs before every start, resume, fork
+  and turn of that provider's threads, with `{ threadId, projectId, hostId }` (`threadId` is null for
+  model listing), and what it returns joins the thread's session env. bb's Claude Code bridge reads
+  `BB_CLAUDE_CODE_EXECUTABLE` from there, so a plugin can swap the `claude` one thread runs (bb 0.50.1).
+  bb keeps the executable a thread attached with until the thread stops, and contributes nothing when the
+  resolver throws or takes over five seconds: answer from memory, and never change a thread's answer
+  (`code-mode/AGENTS.md`).
+- **A Send-menu row can tag one send for a dispatch hook.** `composer.submit({ experimental_data })` from
+  an `app.composer.customize` `sendMenu` row reaches `message.dispatch` as `experimental_submission`
+  (`{ pluginId, data }`), on that send's first dispatch attempt only: a queued re-attempt carries none,
+  and "Send now" on a queued message skips every hook (`code-mode/server/policy.ts`).
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"

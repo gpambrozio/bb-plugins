@@ -3,7 +3,7 @@
 // and the projects whose new threads start in Code Mode. Turning a machine on writes the wrapper
 // there and says whether that worked.
 import { experimental_useRpcQuery, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -90,7 +90,15 @@ export function SettingsSection() {
     [read],
   );
 
+  // Check every machine that is turned on once, when the page opens, so each shows whether its wrapper is ready.
+  const checked = useRef(false);
   const config = read.data;
+  useEffect(() => {
+    if (!config || checked.current) return;
+    checked.current = true;
+    for (const [hostId, on] of Object.entries(config.hosts)) if (on) void check(hostId);
+  }, [config, check]);
+
   if (!config) {
     return <p className="text-sm text-muted-foreground">{read.error ? `Could not load Code Mode's switches: ${read.error.message}` : "Loading…"}</p>;
   }

@@ -3,7 +3,7 @@
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
 Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
-each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream`, `project-actions` and `duo-rail` are new here.
+each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream`, `project-actions`, `duo-rail` and `code-mode` are new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -22,6 +22,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `le
 | [`duo-rail`](duo-rail) | A column of your chosen bb buttons at the bottom of the empty strip beside the screen, on both of the iPhone Duo's displays. | New — 0.1.0 |
 | [`dream`](dream) | Consolidates each Claude Code project's memory overnight, as Claude Code's auto-dream does, in a hidden thread that can write only that memory. Schedule off until you turn it on. | New — 0.1.0 |
 | [`project-actions`](project-actions) | A menu of the project's named commands (dev server, tests, scripts) in each thread's header; each runs in a terminal of that thread, in its worktree. An editor for the list beside the thread. | New — 0.1.0 |
+| [`code-mode`](code-mode) | Runs the Claude Code threads you choose in Claude Code's experimental Code Mode, per thread, from the Send menu or a project default; no bb restart. | New — 0.1.0 |
 
 ## Install
 
