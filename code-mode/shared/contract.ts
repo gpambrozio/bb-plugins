@@ -29,8 +29,13 @@ export const rpcContract = {
     keyTags: (key: string) => [threadTag(key)],
   },
   "config.get": { input: z.object({}), output: configSchema, tags: () => [CONFIG_TAG] },
-  "config.setProject": { input: z.object({ projectId: z.string().min(1), on: z.boolean() }), output: configSchema },
+  /** One project name's switch: every bb project with that name. */
+  "config.setProjectName": { input: z.object({ name: z.string().min(1), on: z.boolean() }), output: configSchema },
   "config.setHost": { input: z.object({ hostId: z.string().min(1), on: z.boolean() }), output: configSchema },
+  /** Select all / Select none: many project names in one write. */
+  "config.setProjectNames": { input: z.object({ names: z.array(z.string().min(1)).max(THREADS_BATCH_MAX), on: z.boolean() }), output: configSchema },
+  /** Many machines in one write. The app turns on only machines whose wrapper is ready (app/select-all.ts). */
+  "config.setHosts": { input: z.object({ hostIds: z.array(z.string().min(1)).max(THREADS_BATCH_MAX), on: z.boolean() }), output: configSchema },
   /** Writes the wrapper on that machine and says whether it worked. */
   "hosts.check": { input: z.object({ hostId: z.string().min(1) }), output: hostCheckSchema },
 } satisfies PluginRpcContract;

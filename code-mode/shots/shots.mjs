@@ -1,5 +1,5 @@
 // Shot list for the Code Mode plugin: "Send in Code Mode" in the new-thread composer's Send menu, and
-// the plugin's settings page, light and dark. Run with `npm run shots -- code-mode` in tools/shots; it
+// the plugin's settings page (two projects with one name share a row), light and dark. Run with `npm run shots -- code-mode` in tools/shots; it
 // writes into code-mode/docs/screenshots/.
 //
 // The screenshot dev bb's Claude Code is a stub that never runs a session, so nothing here is sent: the
@@ -10,12 +10,15 @@ const PLUGIN = "code-mode";
 const PROJECT_NAME = "Acme Web";
 
 export async function seed({ bb, seed }) {
-  const acme = seed.project(PROJECT_NAME, { "README.md": "# Acme Web\n\nThe Acme marketing site.\n" });
+  // Two projects share a name, as the same repository checked out twice does; the page lists the name
+  // once, and its switch covers both.
+  seed.project(PROJECT_NAME, { "README.md": "# Acme Web\n\nThe Acme marketing site.\n" });
+  seed.project(PROJECT_NAME, { "README.md": "# Acme Web\n\nA second checkout.\n" }, { folder: "acme-web-redesign" });
   seed.project("Billing API", { "README.md": "# Billing API\n" });
   seed.project("Docs Site", { "README.md": "# Docs Site\n" });
   const [machine] = bb.cliJson(["machine", "list", "--json"]);
   seed.rpc(PLUGIN, "config.setHost", { hostId: machine.id, on: true });
-  seed.rpc(PLUGIN, "config.setProject", { projectId: acme.id, on: true });
+  seed.rpc(PLUGIN, "config.setProjectName", { name: PROJECT_NAME, on: true });
 }
 
 /** From a fresh page to the Send menu open over the new-thread composer, on Claude Code. */

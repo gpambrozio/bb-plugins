@@ -12,18 +12,32 @@ const LAUNCHER = "/data/plugins/code-mode/host-data/bb-claude-code-mode";
 const HOST = "host_mini";
 const OTHER_HOST = "host_doxbook";
 const PROJECT = "proj_a";
+const PROJECT_NAME = "Acme Web";
 
 type Thread = ReturnType<typeof makeThreadResponse>;
 
-async function setup(options: { settings?: Record<string, string>; installedAt?: number; hostReady?: boolean } = {}) {
+async function setup(options: { settings?: Record<string, string>; installedAt?: number; hostReady?: boolean; storedConfig?: unknown } = {}) {
   const threads = new Map<string, Thread>();
   const metadata = new Map<string, Record<string, unknown>>();
   const turns = new Set<string>();
   const hostCalls: string[] = [];
+  const projectNames = new Map<string, string>([
+    [PROJECT, PROJECT_NAME],
+    ["proj_other_checkout", PROJECT_NAME],
+    ["proj_billing", "Billing API"],
+  ]);
   const { bb, harness } = createFakePluginHost({
     pluginId: PLUGIN_ID,
     settings: options.settings,
     sdk: {
+      projects: {
+        get: async ({ projectId }: { projectId: string }) => {
+          const name = projectNames.get(projectId);
+          if (!name) throw new Error(`no project ${projectId}`);
+          return { id: projectId, name };
+        },
+        list: async () => [...projectNames].map(([id, name]) => ({ id, name })),
+      },
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
           const thread = threads.get(threadId);
@@ -50,6 +64,7 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
     },
   });
   if (options.installedAt !== undefined) await bb.storage.kv.set(INSTALLED_AT_KEY, options.installedAt);
+  if (options.storedConfig !== undefined) await bb.storage.kv.set("config", options.storedConfig);
   await plugin(bb);
 
   function thread(id: string, overrides: Partial<Thread> = {}): Thread {
@@ -69,6 +84,7 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
       experimental_submission: null,
       ...overrides,
       thread: { ...current, ...overrides.thread },
+      project: { id: current.projectId, name: projectNames.get(current.projectId) ?? "Unknown", ...overrides.project },
       host: overrides.host === undefined ? { id: HOST } : overrides.host,
       requestedExecution: { providerId: "claude-code", model: "claude-opus-5-5", ...overrides.requestedExecution },
     });
@@ -167,13 +183,39 @@ describe("project defaults and machines", () => {
   it("starts new threads in a project that is turned on, only on machines that are turned on", async () => {
     const t = await setup();
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_here");
     await t.send("thr_here");
     expect(await t.resolve("thr_here")).toEqual(WRAPPER_ENTRY);
     t.thread("thr_there");
     await t.send("thr_there", { host: { id: OTHER_HOST } });
     expect(await t.resolve("thr_there", OTHER_HOST)).toEqual([]);
+  });
+
+  it("switch projects by name: every same-named project, and one added later, follows the row", async () => {
+    const t = await setup();
+    await t.turnOnHost();
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
+    t.thread("thr_other_checkout", { projectId: "proj_other_checkout" });
+    await t.send("thr_other_checkout");
+    expect(await t.resolve("thr_other_checkout")).toEqual(WRAPPER_ENTRY);
+    t.thread("thr_billing", { projectId: "proj_billing" });
+    await t.send("thr_billing");
+    expect(await t.resolve("thr_billing")).toEqual([]);
+  });
+
+  it("decide by the project's name when bb starts a thread without a dispatch decision", async () => {
+    const t = await setup();
+    await t.turnOnHost();
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
+    t.thread("thr_now", { projectId: "proj_other_checkout" });
+    expect(await t.harness.behavior.resolveProviderEnv("claude-code", { threadId: "thr_now", projectId: "proj_other_checkout", hostId: HOST })).toEqual(WRAPPER_ENTRY);
+  });
+
+  it("move switches saved by project id (a pre-release build) to the projects' names", async () => {
+    const t = await setup({ storedConfig: { projects: { [PROJECT]: true, proj_gone: true }, hosts: { [HOST]: true } } });
+    expect(await t.harness.behavior.callRpc("config.get", {})).toEqual({ projectNames: { [PROJECT_NAME]: true }, hosts: { [HOST]: true } });
+    expect(await t.bb.storage.kv.get("config")).toEqual({ projectNames: { [PROJECT_NAME]: true }, hosts: { [HOST]: true } });
   });
 
   it("keeps a Code Mode thread in Code Mode after its machine is turned off", async () => {
@@ -199,7 +241,7 @@ describe("threads agents and plugins start", () => {
   it("follow the project's default unless the setting says otherwise", async () => {
     const t = await setup();
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_child", { parentThreadId: "thr_parent" });
     await t.send("thr_child", { initiator: "agent", senderThreadId: "thr_parent" });
     expect(await t.resolve("thr_child")).toEqual(WRAPPER_ENTRY);
@@ -208,7 +250,7 @@ describe("threads agents and plugins start", () => {
   it("stay off with the setting at Never", async () => {
     const t = await setup({ settings: { [SPAWNED_SETTING]: "off" } });
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_crew", { originPluginId: "firstmate-crew" });
     await t.send("thr_crew", { initiator: "agent" });
     expect(await t.resolve("thr_crew")).toEqual([]);
@@ -249,7 +291,7 @@ describe("forks", () => {
     await t.turnOnHost();
     t.thread("thr_src");
     await t.send("thr_src");
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_fork", { originKind: "fork", sourceThreadId: "thr_src", status: "idle" });
     expect(await t.resolve("thr_fork")).toEqual([]);
   });
@@ -259,7 +301,7 @@ describe("the resolver's fallback", () => {
   it("gives nothing to threads that existed before the plugin, and writes nothing on them", async () => {
     const t = await setup({ installedAt: 1_000 });
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_old", { createdAt: 500, status: "idle" });
     expect(await t.send("thr_old")).toEqual({ action: "proceed" });
     expect(await t.resolve("thr_old")).toEqual([]);
@@ -269,7 +311,7 @@ describe("the resolver's fallback", () => {
   it("gives nothing to a thread that already ran a turn without the plugin", async () => {
     const t = await setup({ installedAt: 1_000 });
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_ran", { status: "idle" });
     t.turns.add("thr_ran");
     expect(await t.resolve("thr_ran")).toEqual([]);
@@ -278,11 +320,11 @@ describe("the resolver's fallback", () => {
   it("decides a first message that skipped the hook (Send now) by the defaults, and keeps it", async () => {
     const t = await setup();
     await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: true });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_now");
     expect(await t.resolve("thr_now")).toEqual(WRAPPER_ENTRY);
     expect(t.metadata.get("thr_now")?.codeMode).toMatchObject({ codeMode: "on" });
-    await t.harness.behavior.callRpc("config.setProject", { projectId: PROJECT, on: false });
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: false });
     expect(await t.resolve("thr_now")).toEqual(WRAPPER_ENTRY);
   });
 
@@ -319,6 +361,16 @@ describe("the app's reads", () => {
       thr_plain: { state: "off" },
       thr_none: { state: "none" },
     });
+  });
+
+  it("turn many project names and machines on and off in one write", async () => {
+    const t = await setup();
+    expect(await t.harness.behavior.callRpc("config.setProjectNames", { names: ["Acme Web", "Billing API"], on: true })).toEqual({ projectNames: { "Acme Web": true, "Billing API": true }, hosts: {} });
+    expect(await t.harness.behavior.callRpc("config.setProjectNames", { names: ["Acme Web"], on: false })).toEqual({ projectNames: { "Billing API": true }, hosts: {} });
+    expect(await t.harness.behavior.callRpc("config.setHosts", { hostIds: [HOST, OTHER_HOST], on: true })).toMatchObject({ hosts: { [HOST]: true, [OTHER_HOST]: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.hostCalls).toEqual(expect.arrayContaining([HOST, OTHER_HOST]));
+    expect(await t.harness.behavior.callRpc("config.setHosts", { hostIds: [HOST, OTHER_HOST], on: false })).toMatchObject({ hosts: {} });
   });
 
   it("write the wrapper on a machine when it is turned on", async () => {

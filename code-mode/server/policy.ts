@@ -44,6 +44,8 @@ export interface PolicyDeps {
   getThread(threadId: string): Promise<ThreadFacts | null>;
   /** Whether the thread has finished a turn already. */
   hasRun(threadId: string): Promise<boolean>;
+  /** The project's name, which its default is keyed by; null when bb does not know the project. */
+  projectName(projectId: string): Promise<string | null>;
   /** When this plugin was first loaded in this bb (epoch ms). */
   installedAt(): Promise<number>;
   wrappers: Wrappers;
@@ -69,7 +71,8 @@ export function createPolicy(deps: PolicyDeps) {
   const { records } = deps;
 
   async function facts(args: {
-    thread: Pick<ThreadFacts, "projectId" | "originKind" | "sourceThreadId" | "parentThreadId" | "originPluginId">;
+    thread: Pick<ThreadFacts, "originKind" | "sourceThreadId" | "parentThreadId" | "originPluginId">;
+    projectName: string | null;
     explicit: boolean | null;
     starter: string | null;
     spawned: boolean;
@@ -87,7 +90,7 @@ export function createPolicy(deps: PolicyDeps) {
       spawned: args.spawned,
       spawnedRule: rule,
       parentRecord,
-      projectDefault: projectDefault(config, args.thread.projectId),
+      projectDefault: projectDefault(config, args.projectName),
       hostAllowed: hostAllowed(config, args.hostId),
       model: args.model,
     };
@@ -111,6 +114,7 @@ export function createPolicy(deps: PolicyDeps) {
     const decision = decide(
       await facts({
         thread: ctx.thread,
+        projectName: ctx.project.name,
         explicit: submissionChoice(ctx.experimental_submission, deps.pluginId),
         starter,
         spawned,
@@ -137,7 +141,8 @@ export function createPolicy(deps: PolicyDeps) {
       const starter = thread.parentThreadId;
       const decision = decide(
         await facts({
-          thread: { ...thread, projectId: projectId ?? thread.projectId },
+          thread,
+          projectName: await deps.projectName(projectId ?? thread.projectId),
           explicit: null,
           starter,
           spawned: starter !== null || thread.originPluginId !== null,

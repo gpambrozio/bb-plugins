@@ -42,6 +42,14 @@ no restart. Read the repository's `AGENTS.md` first.
 - **"Send now" on a queued message skips every dispatch hook**, so the resolver decides a thread with no
   record by the defaults (`decideAtStart`). It never sees `experimental_data`, so "Send in Code Mode"
   can't reach it; that data is delivered only on a send's first dispatch attempt.
+- **Project switches are keyed by project name, not id** (`shared/config.ts`, the owner's choice): bb
+  often has one project per machine, or two checkouts, under one name, and they share one switch, which
+  a project added later with that name follows. The hook reads the name from its context
+  (`ctx.project.name`); the resolver's fallback looks it up (`projects.get`). A pre-release build stored
+  switches by id; `server/config-store.ts` turns those into names on the first read. Renaming a project
+  moves it to the other name's switch.
+- **Select all on Machines turns on only machines whose wrapper check passes** (`app/select-all.ts`), so
+  it never quietly turns on one where Code Mode can't start; the rest stay off with their reason shown.
 - **The machine switch gates new decisions only.** A Code Mode thread keeps getting the wrapper after its
   machine is turned off; the wrapper is written on demand.
 - **The dispatch hook runs under bb's server-wide dispatch lock**: no slow work there. Config is cached in

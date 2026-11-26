@@ -19,8 +19,10 @@ the real `claude`.
   Claude Code and for models that can't run Code Mode.
 - **The choice is fixed.** A thread decides on its first message and keeps that for good: a session
   started in Code Mode can only resume in Code Mode, and one started without it only without.
-- **Defaults.** On the plugin's settings page, turn on **Projects that start in Code Mode**; new Claude
-  Code threads there start in Code Mode without the menu.
+- **Defaults.** On the plugin's settings page, turn on **Projects that start in Code Mode**. A new Claude
+  Code thread starts in Code Mode without the menu when its project is on there and its machine is on
+  under **Machines**. Projects are listed once per name: bb projects with the same name (one per machine,
+  or two checkouts) share a switch, and a project you add later with that name follows it.
 - **Threads that agents and plugins start** (a crewmate, a child thread, a plugin's thread) follow the
   setting of that name: the project's default (the default), never, or the same as the thread that
   started them.
@@ -29,6 +31,9 @@ the real `claude`.
   page. All are off until you do. Leave a machine off when its Claude Code account can't use Code Mode:
   Claude Code refuses it for an organization under HIPAA, for one, and then starts with the ordinary
   tools. Turning a machine on writes the wrapper there and says whether that worked.
+- **Select all / Select none** sit beside both lists. Select all on **Machines** turns on only the
+  machines where the wrapper is ready; any other machine stays off and shows why (offline, Windows, no
+  usable Node). It can't tell an account that refuses Code Mode, so check that list afterwards.
 - **Models.** Code Mode works with Opus 5.5, Sonnet 5.5, Fable 5.2 and later models. A message that would
   move a Code Mode thread to another model is refused with the reason, because the thread could not
   resume on it. Switch the thread back and send again.

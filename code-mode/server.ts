@@ -40,7 +40,16 @@ export default async function plugin(bb: BbPluginApi) {
   }
   const firstLoadedAt = installedAt;
 
-  const config = createConfigStore({ kv: bb.storage.kv, changed: () => bb.rpc.experimental_invalidate([CONFIG_TAG]), log: bb.log });
+  const config = createConfigStore({
+    kv: bb.storage.kv,
+    projectNames: async (projectIds) => {
+      const wanted = new Set(projectIds);
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      return new Map(projects.filter((project) => wanted.has(project.id)).map((project) => [project.id, project.name]));
+    },
+    changed: () => bb.rpc.experimental_invalidate([CONFIG_TAG]),
+    log: bb.log,
+  });
 
   const records = createRecords({
     read: async (threadId) => bb.sdk.threads.getPluginMetadata({ threadId }),
@@ -85,6 +94,7 @@ export default async function plugin(bb: BbPluginApi) {
       const rows = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], limit: "1" });
       return rows.length > 0;
     },
+    projectName: async (projectId) => (await bb.sdk.projects.get({ projectId }).catch(() => null))?.name ?? null,
     installedAt: async () => firstLoadedAt,
     wrappers,
     log: bb.log,
@@ -99,10 +109,16 @@ export default async function plugin(bb: BbPluginApi) {
       return Object.fromEntries(keys.map((threadId) => [threadId, { state: found.get(threadId)?.codeMode ?? "none" }]));
     },
     "config.get": () => config.get(),
-    "config.setProject": ({ projectId, on }) => config.setProject(projectId, on),
+    "config.setProjectName": ({ name, on }) => config.setProjectNames([name], on),
     "config.setHost": async ({ hostId, on }) => {
-      const updated = await config.setHost(hostId, on);
+      const updated = await config.setHosts([hostId], on);
       if (on) void wrappers.check(hostId);
+      return updated;
+    },
+    "config.setProjectNames": ({ names, on }) => config.setProjectNames(names, on),
+    "config.setHosts": async ({ hostIds, on }) => {
+      const updated = await config.setHosts(hostIds, on);
+      if (on) for (const hostId of hostIds) void wrappers.check(hostId);
       return updated;
     },
     "hosts.check": async ({ hostId }) => {
