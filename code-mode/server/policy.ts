@@ -7,10 +7,9 @@
 //   every start, resume, fork and turn. For a Code Mode thread it hands bb the wrapper's launcher as
 //   BB_CLAUDE_CODE_EXECUTABLE; for any other thread, nothing.
 //
-// The resolver must give a thread the same answer every time, or its session can't resume. A thread
-// whose first message skipped the hook ("Send now" on a queued message skips every hook) is decided
-// here instead, by the defaults. A thread that existed before the plugin, or that already ran a turn
-// without it, is left alone: it gets nothing, now and later.
+// The resolver must give a thread the same answer every time, or its session can't resume. Only the
+// hook decides a new thread; the resolver decides only a fork (by its source), and leaves any other
+// thread without a record alone: it gets nothing, now and later (see decideAtStart).
 import type { ExperimentalPluginProviderEnvContext, ExperimentalPluginProviderEnvEntry, MessageDispatchHookContext, MessageDispatchHookDecision } from "@get-bb/plugin-sdk";
 
 import { hostAllowed, projectDefault } from "../shared/config";
@@ -42,12 +41,6 @@ export interface PolicyDeps {
   config: ConfigStore;
   spawnedRule(): Promise<SpawnedRule>;
   getThread(threadId: string): Promise<ThreadFacts | null>;
-  /** Whether the thread has finished a turn already. */
-  hasRun(threadId: string): Promise<boolean>;
-  /** The project's name, which its default is keyed by; null when bb does not know the project. */
-  projectName(projectId: string): Promise<string | null>;
-  /** When this plugin was first loaded in this bb (epoch ms). */
-  installedAt(): Promise<number>;
   wrappers: Wrappers;
   log: { info(message: string): void; warn(message: string): void; error(message: string): void };
 }
@@ -133,31 +126,22 @@ export function createPolicy(deps: PolicyDeps) {
     return refusal ? { action: "reject", message: refusal } : PROCEED;
   }
 
-  /** The record for a thread bb starts without one: inherited, by the defaults, or none at all. */
-  function decideAtStart(threadId: string, projectId: string | null, hostId: string) {
+  /**
+   * The record for a thread bb starts without one. A fork takes its source's choice, since it resumes
+   * the source's session. Any other thread is left alone and gets nothing: its first message skipped the
+   * dispatch hook ("Send now" on a queued message), or it started while the plugin was off. The resolver
+   * can't tell whether its session has already started, nor on which model, so asserting Code Mode for
+   * it could record a session that never ran in Code Mode.
+   */
+  function decideAtStart(threadId: string) {
     return records.decideOnce(threadId, async () => {
       const thread = await deps.getThread(threadId);
-      if (!thread) return { record: null };
-      if (!forkSource(thread) && (thread.createdAt < (await deps.installedAt()) || (await deps.hasRun(threadId)))) {
-        // It ran, or was made, without the plugin: its session is not Code Mode, so it never will be.
-        return { record: null };
-      }
-      const starter = thread.parentThreadId;
-      const known = await facts({
-        thread,
-        projectName: await deps.projectName(projectId ?? thread.projectId),
-        explicit: null,
-        starter,
-        spawned: starter !== null || thread.originPluginId !== null,
-        hostId,
-        hostName: null,
-        model: null,
-      });
-      const decision = await requireWrapper(decide(known), known, () => deps.wrappers.readiness(hostId));
-      // With no explicit choice, decide() never refuses.
-      if (decision.kind === "reject") return { record: null };
-      deps.log.info(`Thread ${threadId} started without a dispatch decision: Code Mode ${decision.codeMode} (${decision.reason}).`);
-      return { record: records.make(decision.codeMode, decision.reason), store: true };
+      const source = thread ? forkSource(thread) : null;
+      if (!source) return { record: null };
+      const sourceRecord = await records.get(source);
+      const codeMode = sourceRecord?.codeMode === "on" ? "on" : "off";
+      deps.log.info(`Fork ${threadId} started without a dispatch decision: Code Mode ${codeMode}, as its source.`);
+      return { record: records.make(codeMode, codeMode === "on" ? "forked from a Code Mode thread" : "forked from a thread without Code Mode"), store: true };
     });
   }
 
@@ -165,7 +149,7 @@ export function createPolicy(deps: PolicyDeps) {
     // Model listing and other provider processes that serve no thread are never touched.
     if (ctx.threadId === null) return [];
     try {
-      const record = await decideAtStart(ctx.threadId, ctx.projectId, ctx.hostId);
+      const record = await decideAtStart(ctx.threadId);
       if (record?.codeMode !== "on") return [];
       const path = await deps.wrappers.pathFor(ctx.hostId);
       if (path === null) {

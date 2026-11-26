@@ -6,8 +6,9 @@
 // a machine that was on. A service starts once loading is done.
 //
 // It checks every machine that is on when it starts (a launcher naming an old Node is rewritten after
-// a bb update), then every RECHECK_MS checks again the ones that are on but not ready, so a machine
-// that was offline recovers by itself. The interval is longer than the host worker's five idle minutes
+// a bb update), then every RECHECK_MS checks again every machine that is on and not ready at that
+// moment, so a machine that was offline recovers by itself, including one turned on, or checked from
+// the settings page, after the service started. The interval is longer than the host worker's five idle minutes
 // only by chance; a ready machine is not asked again, so no worker is kept alive for it.
 import type { Config } from "../shared/config";
 import type { InstallResult } from "../shared/host-contract";
@@ -18,6 +19,8 @@ export const RECHECK_MS = 5 * 60_000;
 export interface MachineChecksDeps {
   config(): Promise<Config>;
   check(hostId: string): Promise<InstallResult>;
+  /** Whether the last check of that machine, from anywhere, found its wrapper ready. */
+  isReady(hostId: string): boolean;
   log: { warn(message: string): void };
   /** Resolves after `ms`, or as soon as `signal` aborts. */
   sleep?(ms: number, signal: AbortSignal): Promise<void>;
@@ -52,11 +55,9 @@ export async function runMachineChecks(signal: AbortSignal, deps: MachineChecksD
   const sleep = deps.sleep ?? abortableSleep;
   let pending = await machinesOn(deps);
   while (!signal.aborted) {
-    const results = await Promise.all(pending.map(async (hostId) => ({ hostId, result: await deps.check(hostId) })));
-    const notReady = new Set(results.filter(({ result }) => !result.ok).map(({ hostId }) => hostId));
+    await Promise.all(pending.map((hostId) => deps.check(hostId)));
     await sleep(RECHECK_MS, signal);
     if (signal.aborted) break;
-    // Only machines still on, and not ready at the last look.
-    pending = (await machinesOn(deps)).filter((hostId) => notReady.has(hostId));
+    pending = (await machinesOn(deps)).filter((hostId) => !deps.isReady(hostId));
   }
 }

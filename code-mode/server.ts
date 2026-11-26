@@ -14,7 +14,6 @@ import { CLAUDE_CODE, createPolicy } from "./server/policy";
 import { createRecords } from "./server/records";
 import { createWrappers } from "./server/wrappers";
 
-export const INSTALLED_AT_KEY = "installedAt";
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -33,13 +32,6 @@ export default async function plugin(bb: BbPluginApi) {
     rule = spawnedRule(next[SPAWNED_SETTING]);
   });
 
-  // The first load marks the moment from which new threads are this plugin's to decide.
-  let installedAt = await bb.storage.kv.get<number>(INSTALLED_AT_KEY);
-  if (typeof installedAt !== "number") {
-    installedAt = Date.now();
-    await bb.storage.kv.set(INSTALLED_AT_KEY, installedAt);
-  }
-  const firstLoadedAt = installedAt;
 
   const config = createConfigStore({
     kv: bb.storage.kv,
@@ -92,12 +84,6 @@ export default async function plugin(bb: BbPluginApi) {
         originPluginId: thread.originPluginId,
       };
     },
-    hasRun: async (threadId) => {
-      const rows = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], limit: "1" });
-      return rows.length > 0;
-    },
-    projectName: async (projectId) => (await bb.sdk.projects.get({ projectId }).catch(() => null))?.name ?? null,
-    installedAt: async () => firstLoadedAt,
     wrappers,
     log: bb.log,
   });
@@ -132,6 +118,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Writes the wrapper on every machine that is on, once loading is done (server/machine-checks.ts).
   bb.background.service(MACHINE_CHECKS_SERVICE, {
-    start: (signal) => runMachineChecks(signal, { config: () => config.get(), check: (hostId) => wrappers.check(hostId), log: bb.log }),
+    start: (signal) =>
+      runMachineChecks(signal, { config: () => config.get(), check: (hostId) => wrappers.check(hostId), isReady: (hostId) => wrappers.isReady(hostId), log: bb.log }),
   });
 }

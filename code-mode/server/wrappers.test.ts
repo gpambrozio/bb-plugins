@@ -43,4 +43,30 @@ describe("the wrapper's path on each machine", () => {
     const throwing = createWrappers({ install: async () => Promise.reject(new Error("offline")), kv: kv(), log });
     expect(await throwing.check("h1")).toEqual({ ok: false, reason: "offline" });
   });
+
+  it("does not let a saved path stand in for a failed check when a new thread is decided, but keeps routing existing ones", async () => {
+    const store = kv({ [PATHS_KEY]: { h1: "/saved" } });
+    const wrappers = createWrappers({ install: async () => ({ ok: false, reason: "old Node no longer exists" }), kv: store, log });
+    await wrappers.check("h1");
+    expect(await wrappers.readiness("h1")).toEqual({ ok: false, reason: "old Node no longer exists" });
+    expect(await wrappers.pathFor("h1")).toBe("/saved");
+  });
+
+  it("takes back an earlier success when a later check fails", async () => {
+    let ok = true;
+    const wrappers = createWrappers({ install: async () => (ok ? { ok: true, path: "/p" } : { ok: false, reason: "gone" }), kv: kv(), log });
+    await wrappers.check("h1");
+    expect(await wrappers.readiness("h1")).toEqual({ ok: true });
+    ok = false;
+    await wrappers.check("h1");
+    expect(wrappers.isReady("h1")).toBe(false);
+    expect(await wrappers.readiness("h1")).toEqual({ ok: false, reason: "gone" });
+  });
+
+  it("checks a machine never checked on this load before saying it is ready", async () => {
+    const install = vi.fn(async (): Promise<InstallResult> => ({ ok: true, path: "/p" }));
+    const wrappers = createWrappers({ install, kv: kv({ [PATHS_KEY]: { h1: "/p" } }), log });
+    expect(await wrappers.readiness("h1")).toEqual({ ok: true });
+    expect(install).toHaveBeenCalledTimes(1);
+  });
 });

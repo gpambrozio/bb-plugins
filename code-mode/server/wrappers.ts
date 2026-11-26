@@ -56,6 +56,8 @@ export function createWrappers(deps: WrappersDeps) {
           await deps.kv.set(PATHS_KEY, paths).catch((error: unknown) => deps.log.warn(`Could not save the wrapper's path for ${hostId}: ${String(error)}`));
         }
       } else {
+        // A failed check takes back an earlier success: no new thread may count on this wrapper.
+        confirmed.delete(hostId);
         deps.log.warn(`The Code Mode wrapper is not ready on ${hostId}: ${result.reason}`);
       }
       return result;
@@ -64,7 +66,19 @@ export function createWrappers(deps: WrappersDeps) {
     return run;
   }
 
-  /** The launcher's path on that machine, or null when there is none to give bb. */
+  function withTimeout<T>(work: Promise<T>): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), deps.timeoutMs ?? FIRST_CHECK_TIMEOUT_MS);
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  /**
+   * The launcher's path on that machine for a thread already in Code Mode, or null when there is none
+   * to give bb. A path saved by an earlier load still counts, even after a failed check: such a thread
+   * can only resume through the wrapper, and the launcher runs claude as asked if its Node is gone.
+   */
   async function pathFor(hostId: string): Promise<string | null> {
     const now = confirmed.get(hostId);
     if (now) return now;
@@ -73,16 +87,8 @@ export function createWrappers(deps: WrappersDeps) {
       void check(hostId);
       return known;
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), deps.timeoutMs ?? FIRST_CHECK_TIMEOUT_MS);
-    });
-    try {
-      const result = await Promise.race([check(hostId), timeout]);
-      return result?.ok ? result.path : null;
-    } finally {
-      clearTimeout(timer);
-    }
+    const result = await withTimeout(check(hostId));
+    return result?.ok ? result.path : null;
   }
 
   /** Each machine checked on this load: whether its wrapper is ready, and why not. */
@@ -90,14 +96,25 @@ export function createWrappers(deps: WrappersDeps) {
     return Object.fromEntries([...last].map(([hostId, result]) => [hostId, result.ok ? { ok: true, message: "Wrapper ready" } : { ok: false, message: result.reason }]));
   }
 
-  /** Whether a thread decided now on that machine could get the wrapper, and why not. */
+  /**
+   * Whether a thread decided now on that machine may be recorded as Code Mode: only after a check on
+   * this load succeeded, and no later one failed. A path saved by an earlier load is not enough.
+   */
   async function readiness(hostId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-    if ((await pathFor(hostId)) !== null) return { ok: true };
-    const result = last.get(hostId);
-    return { ok: false, reason: result && !result.ok ? result.reason : "the wrapper could not be checked there in time" };
+    if (confirmed.has(hostId)) return { ok: true };
+    const prior = last.get(hostId);
+    if (prior && !prior.ok) return { ok: false, reason: prior.reason };
+    const result = await withTimeout(check(hostId));
+    if (result?.ok) return { ok: true };
+    return { ok: false, reason: result ? result.reason : "the wrapper could not be checked there in time" };
   }
 
-  return { check, pathFor, statuses, readiness };
+  /** Whether the last check on this load found the wrapper ready (false when there was none). */
+  function isReady(hostId: string): boolean {
+    return confirmed.has(hostId);
+  }
+
+  return { check, pathFor, statuses, readiness, isReady };
 }
 
 export type Wrappers = ReturnType<typeof createWrappers>;

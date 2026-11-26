@@ -4,7 +4,7 @@ import { createFakePluginHost, makeMessageDispatchHookContext, makeThreadRespons
 import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
 import { describe, expect, it } from "vitest";
 
-import plugin, { INSTALLED_AT_KEY } from "./server";
+import plugin from "./server";
 import { MACHINE_CHECKS_SERVICE } from "./server/machine-checks";
 import { SPAWNED_SETTING } from "./shared/settings";
 
@@ -17,7 +17,7 @@ const PROJECT_NAME = "Acme Web";
 
 type Thread = ReturnType<typeof makeThreadResponse>;
 
-async function setup(options: { settings?: Record<string, string>; installedAt?: number; hostReady?: boolean; storedConfig?: unknown } = {}) {
+async function setup(options: { settings?: Record<string, string>; hostReady?: boolean | (() => boolean); storedConfig?: unknown } = {}) {
   const threads = new Map<string, Thread>();
   const metadata = new Map<string, Record<string, unknown>>();
   const turns = new Set<string>();
@@ -64,10 +64,10 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
       // As bb does: no host calls while the plugin's factory is still loading.
       if (loading) throw new Error("host plugin calls are unavailable during factory registration; call from a handler, service, or timer");
       hostCalls.push(call.hostId);
-      return options.hostReady === false ? { ok: false, reason: "Windows" } : { ok: true, path: LAUNCHER };
+      const ready = typeof options.hostReady === "function" ? options.hostReady() : options.hostReady !== false;
+      return ready ? { ok: true, path: LAUNCHER } : { ok: false, reason: "Windows" };
     },
   });
-  if (options.installedAt !== undefined) await bb.storage.kv.set(INSTALLED_AT_KEY, options.installedAt);
   if (options.storedConfig !== undefined) await bb.storage.kv.set("config", options.storedConfig);
   await plugin(bb);
   // Anything the factory left running finishes here, still counted as loading.
@@ -232,14 +232,6 @@ describe("project defaults and machines", () => {
     expect(await t.resolve("thr_billing")).toEqual([]);
   });
 
-  it("decide by the project's name when bb starts a thread without a dispatch decision", async () => {
-    const t = await setup();
-    await t.turnOnHost();
-    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
-    t.thread("thr_now", { projectId: "proj_other_checkout" });
-    expect(await t.harness.behavior.resolveProviderEnv("claude-code", { threadId: "thr_now", projectId: "proj_other_checkout", hostId: HOST })).toEqual(WRAPPER_ENTRY);
-  });
-
   it("move switches saved by project id (a pre-release build) to the projects' names", async () => {
     const t = await setup({ storedConfig: { projects: { [PROJECT]: true, proj_gone: true }, hosts: { [HOST]: true } } });
     expect(await t.harness.behavior.callRpc("config.get", {})).toEqual({ projectNames: { [PROJECT_NAME]: true }, hosts: { [HOST]: true } });
@@ -348,7 +340,7 @@ describe("forks", () => {
 
 describe("the resolver's fallback", () => {
   it("gives nothing to threads that existed before the plugin, and writes nothing on them", async () => {
-    const t = await setup({ installedAt: 1_000 });
+    const t = await setup();
     await t.turnOnHost();
     await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_old", { createdAt: 500, status: "idle" });
@@ -358,7 +350,7 @@ describe("the resolver's fallback", () => {
   });
 
   it("gives nothing to a thread that already ran a turn without the plugin", async () => {
-    const t = await setup({ installedAt: 1_000 });
+    const t = await setup();
     await t.turnOnHost();
     await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_ran", { status: "idle" });
@@ -366,15 +358,35 @@ describe("the resolver's fallback", () => {
     expect(await t.resolve("thr_ran")).toEqual([]);
   });
 
-  it("decides a first message that skipped the hook (Send now) by the defaults, and keeps it", async () => {
+  it("leaves a thread whose first message skipped the hook alone, in a project that starts in Code Mode, and writes nothing", async () => {
+    // "Send now" on a queued first message, possibly on a model without Code Mode, or a steer during
+    // the first turn of a thread that started while the plugin was off: the resolver can't tell which.
     const t = await setup();
     await t.turnOnHost();
     await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
-    t.thread("thr_now");
-    expect(await t.resolve("thr_now")).toEqual(WRAPPER_ENTRY);
-    expect(t.metadata.get("thr_now")?.codeMode).toMatchObject({ codeMode: "on" });
-    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: false });
-    expect(await t.resolve("thr_now")).toEqual(WRAPPER_ENTRY);
+    t.thread("thr_now", { status: "starting" });
+    expect(await t.resolve("thr_now")).toEqual([]);
+    expect(t.metadata.has("thr_now")).toBe(false);
+    expect(await t.resolve("thr_now")).toEqual([]);
+  });
+
+  it("records a new thread off when its machine's wrapper failed its latest check, though an earlier one passed", async () => {
+    let ready = true;
+    const t = await setup({ hostReady: () => ready });
+    await t.turnOnHost();
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
+    await t.harness.behavior.callRpc("hosts.check", { hostId: HOST });
+    t.thread("thr_before");
+    await t.send("thr_before");
+    expect(t.metadata.get("thr_before")?.codeMode).toMatchObject({ codeMode: "on" });
+    ready = false;
+    await t.harness.behavior.callRpc("hosts.check", { hostId: HOST });
+    t.thread("thr_after");
+    expect(await t.send("thr_after")).toEqual({ action: "proceed" });
+    expect(t.metadata.get("thr_after")?.codeMode).toMatchObject({ codeMode: "off", reason: expect.stringContaining("wrapper isn't ready") });
+    expect(await t.send("thr_after", t.codeModeSend)).toEqual({ action: "proceed" });
+    // The thread already in Code Mode keeps getting the wrapper it can only resume with.
+    expect(await t.resolve("thr_before")).toEqual(WRAPPER_ENTRY);
   });
 
   it("never touches a provider process that serves no thread", async () => {

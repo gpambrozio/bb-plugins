@@ -50,7 +50,9 @@ the real `claude`.
   shows metadata: Organize → Rows → Metadata), and **Code Mode: on · Fixed for this thread** in its
   thread menu.
 
-Threads that existed before you installed the plugin are never touched.
+Threads that existed before you installed the plugin are never touched. Neither is a thread whose first
+message went out without the plugin's check: one started while the plugin was off, or one sent with
+**Send now** on a queued message, which skips plugins' checks. Those start, and stay, without Code Mode.
 
 | The Send menu | A Code Mode thread |
 | --- | --- |
