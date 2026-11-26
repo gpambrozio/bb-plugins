@@ -39,7 +39,7 @@ specific to `terminals`.
 | `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, one run per tab at a time, typing, the echo check before Enter, and waiting for the command's end (or quiet output without marks). |
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
 | `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
-| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
+| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip), through the router's history. |
 | `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
 | `server/chat-visibility.ts` | Whether the agent chats show in bb's sidebar: all shown (the owner's setting), or the ones from before hidden once. |
 | `app/agent-ran-note.tsx`, `app/agent-note-fold.ts` | The card over a terminal listing every command the tab's chat typed there: three folded, all expanded (a quarter of the terminal's height, then scrolling), in bb's `timeline-accent`; or a pill, per tab in localStorage. |
@@ -220,7 +220,7 @@ JSON-quoted since they are the user's own names; other `{{…}}` stay as written
 built-in text itself is stored as nothing, so a later change to the built-in text reaches an owner who
 never edited it. `configure` is synchronous, so the server caches the text and reads it again before
 each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings (a gear
-always shown at the end of the tab strip, and one in the agent panel) with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
+always shown at the end of the tab strip) with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
 has no call for it.
 
 **Agent chats are hidden threads until the owner opens one.** The owner did not want them in the

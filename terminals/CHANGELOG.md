@@ -35,10 +35,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them all back in the sidebar with notifications.
 - **A resizable agent panel.** Drag the edge between the terminal and the panel (or use the arrow keys
   on it) to make the panel wider or narrower; the terminal refits, and this browser remembers the width.
-- **Your own instructions for the agent.** A gear at the end of the tabs, and another in the agent
-  panel, open the plugin's settings, where you can read what the agent is told, edit it or add to it,
-  and restore the built-in text. The terminal's name and machine are always given to the agent,
-  whatever you write.
+- **Your own instructions for the agent.** The gear at the end of the tabs opens the plugin's settings,
+  where you can read what the agent is told, edit it or add to it, and restore the built-in text. The
+  terminal's name and machine are always given to the agent, whatever you write.
 - **After an ssh session ends,** the agent no longer finds the terminal stuck "running" a command when
   the remote shell reported its prompts and your own shell does not: your prompt coming back is enough.
 - **Long outputs keep their result.** A command that prints more than the terminal keeps still reports

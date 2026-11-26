@@ -111,9 +111,9 @@ The colours and font follow bb's theme, as bb's own terminal does.
   before anything destructive, slow, or that needs a password.
 - No other thread gets those tools. Letting go of the chat, or closing the tab, takes them away.
 - **You can change what the agent is told.** The gear at the end of the tab strip, next to the bot
-  button, opens the plugin's settings (Settings → Plugins → Terminals), as does the one in the agent
-  panel. Its **Agent instructions** section shows the built-in text: edit it, add to it, save, or
-  **Restore the built-in instructions**. Saving an empty text does the same.
+  button, opens the plugin's settings (Settings → Plugins → Terminals). Its **Agent instructions**
+  section shows the built-in text: edit it, add to it, save, or **Restore the built-in instructions**.
+  Saving an empty text does the same.
   The plugin always puts one line of its own first, naming the tab and its machine and saying the two
   tools act on it, so the agent knows its terminal whatever you write. `{{tab}}` and `{{machine}}` in
   your text become the tab's name and its machine's, in quotes. A change applies to chats started
