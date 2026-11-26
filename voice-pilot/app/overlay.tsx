@@ -1,6 +1,6 @@
 /**
  * The toast: a bb toast, in bb's own toast stack, while a session is connecting or live, with what is happening
- * (connecting, listening, hearing you, speaking, muted), Mute or Unmute and End. When a session ends or Talk
+ * (connecting, listening, hearing you, speaking, muted, paused), Mute or Unmute (Resume while paused) and End. When a session ends or Talk
  * fails it says why, with Talk again and Close. Otherwise there is no toast. It is an app overlay, mounted once
  * per window and drawing nothing itself, so it also hands the controller its RPC client, the server's session
  * signals, a way to show a thread in this window and the thread on its screen, and sends a debug-tab request
@@ -25,13 +25,15 @@ export function useVoiceState(): VoiceState {
 export function statusText(state: VoiceState): string {
   if (state.phase === "connecting") return "Connecting…";
   if (state.phase === "ending") return "Ending…";
+  if (state.phase === "paused") return "Paused";
+  if (state.phase === "resuming") return "Coming back…";
   if (state.muted) return "Muted";
   if (state.speaking.voice) return "Speaking";
   if (state.speaking.user) return "Hearing you";
   return "Listening";
 }
 
-type ActionKind = "mute" | "unmute" | "talk";
+type ActionKind = "mute" | "unmute" | "talk" | "resume";
 type CancelKind = "end" | "close";
 
 /** What the toast says and offers in a state, or null for no toast. */
@@ -47,10 +49,17 @@ export function voiceToast(state: VoiceState): VoiceToast | null {
     return state.note === null ? null : { title: "Voice Pilot", description: state.note, action: "talk", cancel: "close" };
   }
   const title = `Voice Pilot · ${statusText(state)}`;
-  if (state.phase === "connecting") return { title, description: undefined, action: null, cancel: "end" };
+  if (state.phase === "connecting" || state.phase === "resuming") return { title, description: undefined, action: null, cancel: "end" };
+  if (state.phase === "paused") return { title, description: state.note ?? PAUSED_NOTE, action: "resume", cancel: "end" };
   if (state.phase === "ending") return { title, description: undefined, action: null, cancel: null };
-  return { title, description: openedText(state), action: state.muted ? "unmute" : "mute", cancel: "end" };
+  return { title, description: openedText(state) ?? (state.muted ? MUTED_NOTE : undefined), action: state.muted ? "unmute" : "mute", cancel: "end" };
 }
+
+/** What a muted session's card says, when it has nothing else to say. */
+export const MUTED_NOTE = "The voice cannot hear you. Tap Unmute to talk again.";
+
+/** What a paused session's card says. */
+export const PAUSED_NOTE = "bb left the screen. It picks up where you left off when you come back.";
 
 /** What the voice last opened, as the session card says it. */
 export function openedText(state: VoiceState): string | undefined {
@@ -58,11 +67,12 @@ export function openedText(state: VoiceState): string | undefined {
   return state.opened.ok ? `Opened ${state.opened.label}` : `Could not open ${state.opened.label}`;
 }
 
-const ACTION_LABELS: Record<ActionKind, string> = { mute: "Mute", unmute: "Unmute", talk: "Talk" };
+const ACTION_LABELS: Record<ActionKind, string> = { mute: "Mute", unmute: "Unmute", talk: "Talk", resume: "Resume" };
 const CANCEL_LABELS: Record<CancelKind, string> = { end: "End", close: "Close" };
 
 function runAction(kind: ActionKind): void {
   if (kind === "talk") voice.talk();
+  else if (kind === "resume") void voice.resume();
   else voice.toggleMute();
 }
 

@@ -9,19 +9,21 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { voice, type VoiceState } from "./controller";
 import { DebugLogView } from "./debug";
-import { statusText, useVoiceState } from "./overlay";
+import { PAUSED_NOTE, statusText, useVoiceState } from "./overlay";
 
 /** The words under the buttons, for a state. */
 export function pageNote(state: VoiceState): string {
   if (state.phase === "idle") return state.note ?? "Tap Talk. It says hi, names the running threads, then listens. Say goodbye to end.";
   if (state.phase === "connecting") return "Connecting to OpenAI…";
   if (state.phase === "ending") return "Ending…";
-  return state.muted ? "Your microphone is muted." : "Ask what's going on, what a thread said, or what waits on you.";
+  if (state.phase === "paused") return state.note ?? PAUSED_NOTE;
+  if (state.phase === "resuming") return "Picking the session up again…";
+  return state.muted ? "Your microphone is muted. Tap Unmute to talk again." : "Ask what's going on, what a thread said, or what waits on you.";
 }
 
 /** The dot beside the state: idle, live, the voice speaking. */
 function dotClass(state: VoiceState): string {
-  if (state.phase === "idle") return "bg-muted-foreground";
+  if (state.phase === "idle" || state.phase === "paused") return "bg-muted-foreground";
   if (state.phase !== "live") return "bg-warning-text animate-pulse";
   if (state.speaking.voice) return "bg-success animate-pulse";
   return state.muted ? "bg-muted-foreground" : "bg-success";
@@ -29,7 +31,7 @@ function dotClass(state: VoiceState): string {
 
 export function VoicePage() {
   const state = useVoiceState();
-  const active = state.phase === "connecting" || state.phase === "live";
+  const active = state.phase !== "idle" && state.phase !== "ending";
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <section className="flex flex-col gap-3 border-b border-border px-4 py-4">
@@ -43,6 +45,11 @@ export function VoicePage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {state.phase === "paused" && (
+              <Button type="button" variant="outline" onClick={() => void voice.resume()}>
+                Resume
+              </Button>
+            )}
             {state.phase === "live" && (
               <Button type="button" variant="outline" onClick={() => voice.toggleMute()}>
                 {state.muted ? "Unmute" : "Mute"}

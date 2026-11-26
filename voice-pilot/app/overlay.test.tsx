@@ -244,6 +244,19 @@ describe("the voice toast", () => {
     expect(voiceToast({ ...live, opened: { label: "github.com/acme/web/pull/20", ok: true } })?.description).toBe("Opened github.com/acme/web/pull/20");
     expect(voiceToast({ ...live, opened: { label: "example.com/x", ok: false } })?.description).toBe("Could not open example.com/x");
     expect(voiceToast(live)?.description).toBeUndefined();
+    expect(voiceToast({ ...live, muted: true })).toMatchObject({ title: "Voice Pilot · Muted", description: "The voice cannot hear you. Tap Unmute to talk again.", action: "unmute" });
+  });
+
+  it("says a paused session picks up on return, with Resume and End", () => {
+    const paused = { ...fake.idle, phase: "paused" as const };
+    expect(voiceToast(paused)).toEqual({
+      title: "Voice Pilot · Paused",
+      description: "bb left the screen. It picks up where you left off when you come back.",
+      action: "resume",
+      cancel: "end",
+    });
+    expect(voiceToast({ ...paused, note: "Could not pick the session up. Tap Resume to try again." })?.description).toContain("Tap Resume");
+    expect(voiceToast({ ...paused, phase: "resuming" })).toEqual({ title: "Voice Pilot · Coming back…", description: undefined, action: null, cancel: "end" });
   });
 
   it("says what Talk could not do, the same way", () => {

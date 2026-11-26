@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RULES } from "./instructions";
-import { ALIVE_TIMEOUT_MS, GOODBYE_MS, IDLE_CHECK_MS, VoiceSessions, WORDS_WAIT_MS, type AnnounceLevel, type SessionSignal } from "./session";
+import { ALIVE_TIMEOUT_MS, GOODBYE_MS, IDLE_CHECK_MS, PAUSE_END_MS, VoiceSessions, WORDS_WAIT_MS, type AnnounceLevel, type SessionSignal } from "./session";
 import { FakeBb, FakeClock, FakeRealtime, quietLog, settle, thread, type FakeSideband } from "./testing/fakes";
 
 async function setup(options: { announce?: AnnounceLevel; instructions?: string } = {}) {
@@ -20,9 +20,9 @@ async function setup(options: { announce?: AnnounceLevel; instructions?: string 
   return { realtime, clock, bb, signals, sessions };
 }
 
-async function started(options: Parameters<typeof setup>[0] = {}) {
+async function started(options: Parameters<typeof setup>[0] & { phone?: boolean } = {}) {
   const harness = await setup(options);
-  const { sessionId } = await harness.sessions.start("v=0 offer", null, "thr_a");
+  const { sessionId } = await harness.sessions.start("v=0 offer", null, "thr_a", options.phone === true);
   const sideband = harness.realtime.last;
   sideband.open();
   await settle();
@@ -100,6 +100,16 @@ describe("tools on the sideband", () => {
     await respond(sideband, { tool: { name: "read_reply", args: { thread_id: "thr_a" } } });
     await respond(sideband, { tool: { name: "open_link", args: { link: 1 } } });
     expect(signals).toContainEqual({ sessionId, type: "open-link", url: "https://github.com/acme/web/pull/20", label: "github.com/acme/web/pull/20" });
+  });
+
+  it("mute the microphone of the window holding the call, and keep the session up", async () => {
+    const { sideband, signals, sessionId, clock } = await started();
+    await respond(sideband, { tool: { name: "mute_microphone" } });
+    expect(signals).toContainEqual({ sessionId, type: "mute" });
+    await clock.advance(GOODBYE_MS);
+    expect(signals.some((signal) => signal.type === "state" && signal.state === "ended")).toBe(false);
+    // The voice reads the tool's answer: that they are muted, and how to unmute.
+    expect(sideband.ofType("response.create").at(-1)).toMatchObject({ event_id: expect.stringMatching(/^vp_tool_/u) });
   });
 
   it("know the thread on screen from the app's heartbeat", async () => {
@@ -305,6 +315,8 @@ describe("turns", () => {
     await settle();
     expect(userResponses(sideband)).toHaveLength(1);
     expect(sessions.debugPage(0).entries.filter((entry) => entry.kind === "heard").map((entry) => entry.text)).toEqual(["What's going on?"]);
+    // Logged as the answer to what was said, not as a tool's.
+    expect(sessions.debugPage(0).entries.at(-1)?.title).toBe("Asked for the response to what you said");
     expect(sessionId).toBeTruthy();
   });
 
@@ -371,5 +383,88 @@ describe("a session always ends", () => {
     harness.realtime.refuseNext = new Error("OpenAI refused the call");
     await expect(harness.sessions.start("v=0 offer")).rejects.toThrow("OpenAI refused the call");
     expect(harness.sessions.current()).toBeNull();
+  });
+});
+
+describe("on the phone, a session leaving the screen", () => {
+  const state = (signals: SessionSignal[]) => signals.filter((signal) => signal.type === "state").map((signal) => (signal.type === "state" ? signal.state : ""));
+
+  it("is paused, not ended: its call is hung up, and a new offer picks it up with the recent talk and a cue that it is back", async () => {
+    const { sessions, sessionId, sideband, realtime, signals } = await started({ phone: true });
+    await respond(sideband);
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_1", transcript: "What is the login thread doing?" });
+    sideband.emit({ type: "response.output_audio_transcript.done", transcript: "It is fixing the test." });
+    expect(await sessions.pause(sessionId, "bb left the screen")).toBe(true);
+    expect(realtime.hungUp).toEqual(["rtc_1"]);
+    expect(signals).toContainEqual({ sessionId, type: "state", state: "paused", reason: "bb left the screen" });
+    expect(sessions.current()?.isPaused).toBe(true);
+    expect(sessions.alive(sessionId)).toBe(true);
+    await expect(sessions.renew(sessionId, "v=0 renewal")).rejects.toThrow("paused");
+
+    expect(await sessions.resume(sessionId, "v=0 back")).toEqual({ answerSdp: "answer for rtc_2" });
+    const next = realtime.last;
+    next.open();
+    await settle();
+    expect(realtime.calls[1]?.sdp).toBe("v=0 back");
+    expect(next.items()[0]).toContain("[voice-pilot-resumed]");
+    expect(next.items()[0]).toContain("User: What is the login thread doing?\nVoice: It is fixing the test.");
+    const cue = next.ofType("response.create")[0] as { event_id: string; response: { instructions: string } };
+    expect(cue.event_id).toBe("vp_resume");
+    expect(cue.response.instructions).toContain("Say only that you are back and listening");
+    expect(state(signals)).toEqual(["live", "paused", "live"]);
+    expect(sessions.current()?.isPaused).toBe(false);
+  });
+
+  it("tells the news that came while away once it is back, after the cue, links numbered as before", async () => {
+    const { sessions, sessionId, sideband, realtime } = await started({ phone: true, announce: "all" });
+    await respond(sideband);
+    await sessions.pause(sessionId, "bb left the screen");
+    sessions.news("finished", "thr_a", undefined, "Opened [the PR](https://github.com/acme/web/pull/20).");
+    sessions.news("waiting", "thr_a", "int_1");
+    await settle();
+    expect(sideband.ofType("response.create")).toHaveLength(1);
+
+    await sessions.resume(sessionId, "v=0 back");
+    const next = realtime.last;
+    next.open();
+    await settle();
+    expect(next.items().some((item) => item.includes('"Fix the login test" in web has just finished its turn'))).toBe(true);
+    // The cue first; the news waits for it to end.
+    expect(next.ofType("response.create").map((event) => event.event_id)).toEqual(["vp_resume"]);
+    await respond(next);
+    expect(next.ofType("response.create")).toHaveLength(2);
+    await respond(next, { tool: { name: "open_link", args: { link: 1 } } });
+    expect(next.outputs().at(-1)).toMatchObject({ ok: true, opened: "github.com/acme/web/pull/20" });
+  });
+
+  it("is paused when the phone stops answering or takes the call with it, and ends after thirty minutes away", async () => {
+    const quiet = await started({ phone: true });
+    await quiet.clock.advance(ALIVE_TIMEOUT_MS + IDLE_CHECK_MS);
+    expect(state(quiet.signals)).toEqual(["live", "paused"]);
+    await quiet.clock.advance(PAUSE_END_MS);
+    expect(quiet.signals).toContainEqual({ sessionId: quiet.sessionId, type: "state", state: "ended", reason: "bb was away for thirty minutes" });
+
+    const gone = await started({ phone: true });
+    gone.sideband.drop();
+    for (let retry = 0; retry < 2; retry += 1) {
+      await gone.clock.advance(1_000);
+      gone.realtime.last.drop();
+    }
+    await settle();
+    expect(state(gone.signals)).toEqual(["live", "paused"]);
+  });
+
+  it("picks up even when the pause never reached the server: the call it left is hung up first", async () => {
+    const { sessions, sessionId, realtime } = await started({ phone: true });
+    await sessions.resume(sessionId, "v=0 back");
+    expect(realtime.hungUp).toEqual(["rtc_1"]);
+    expect(realtime.calls).toHaveLength(2);
+  });
+
+  it("ends as before on the desktop and in a browser tab", async () => {
+    const { sessions, sessionId, clock, signals } = await started();
+    expect(await sessions.pause(sessionId, "bb left the screen")).toBe(false);
+    await clock.advance(ALIVE_TIMEOUT_MS + IDLE_CHECK_MS);
+    expect(state(signals)).toEqual(["live", "ended"]);
   });
 });

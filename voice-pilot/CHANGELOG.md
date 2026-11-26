@@ -18,6 +18,11 @@
   turn is told from the agent's reply: what it did, any pull request, anything it waits on you for.
 - Background noise, a cough or an "um" no longer gets an answer: the voice answers only once it has heard
   real words.
+- On a phone, switching away from bb pauses the session instead of ending it. Come back to bb and the voice
+  says it is back and carries on where you left off, then tells you what happened meanwhile; the card says
+  Paused with Resume and End until then. A pause of half an hour ends the session.
+- Say "mute" and the voice mutes your microphone, as the Mute button does, without ending the session; it
+  tells you to tap Unmute to talk again, and the card says so too.
 - Runs on an OpenAI API key or on your ChatGPT subscription through the codex-realtime plugin.
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
   talk.

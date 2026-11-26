@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const legs: FakeLeg[] = [];
+const platform = { value: "desktop" };
 
 class FakeLeg {
   offer = `v=0 offer ${legs.length + 1}`;
@@ -24,7 +25,7 @@ vi.mock("./webrtc", () => ({
     return leg;
   },
 }));
-vi.mock("./platform", () => ({ voicePlatform: () => "desktop" }));
+vi.mock("./platform", () => ({ voicePlatform: () => platform.value }));
 
 const { VoiceController } = await import("./controller");
 
@@ -54,6 +55,7 @@ function fakeRpc() {
   const calls: { method: string; input: Record<string, unknown> }[] = [];
   let sessions = 0;
   const renewFails = { value: false };
+  const resume: { fail: Error | null; live: boolean } = { fail: null, live: true };
   const rpc = {
     call: async (method: string, input: Record<string, unknown>) => {
       calls.push({ method, input });
@@ -62,20 +64,43 @@ function fakeRpc() {
         return { sessionId: `vp_${sessions}`, answerSdp: "answer" };
       }
       if (method === "session.renew") return { answerSdp: "renewal answer" };
-      if (method === "session.alive") return { live: true };
+      if (method === "session.resume") {
+        if (resume.fail !== null) throw resume.fail;
+        return { answerSdp: "resume answer" };
+      }
+      if (method === "session.alive") return { live: resume.live };
       return null;
     },
   };
-  return { rpc: rpc as never, calls, renewFails };
+  return { rpc: rpc as never, calls, renewFails, resume };
 }
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
 }
 
+/** The page's visibility, as bb's mobile app leaving and coming back to the screen changes it. */
+const page = {
+  visibilityState: "visible",
+  listeners: new Set<() => void>(),
+  addEventListener(_type: string, listener: () => void) {
+    page.listeners.add(listener);
+  },
+  removeEventListener(_type: string, listener: () => void) {
+    page.listeners.delete(listener);
+  },
+  show(state: "visible" | "hidden") {
+    page.visibilityState = state;
+    for (const listener of page.listeners) listener();
+  },
+};
+
 beforeEach(() => {
   legs.length = 0;
-  vi.stubGlobal("document", { visibilityState: "visible", addEventListener: () => {}, removeEventListener: () => {} });
+  platform.value = "desktop";
+  page.visibilityState = "visible";
+  page.listeners.clear();
+  vi.stubGlobal("document", page);
   vi.stubGlobal(
     "Audio",
     class {
@@ -350,5 +375,111 @@ describe("the window's screen", () => {
     voice.attach(rpc);
     voice.focus("thr_a");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("bb's mobile app leaving the screen", () => {
+  /** A live session in the given client, with every microphone prompt answered at once. */
+  async function live(client: "mobile" | "desktop") {
+    platform.value = client;
+    const tracks: FakeTrack[] = [];
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () => {
+          const { track, stream } = fakeStream();
+          tracks.push(track);
+          return stream;
+        },
+      },
+    });
+    const harness = fakeRpc();
+    const voice = new VoiceController();
+    voice.attach(harness.rpc);
+    voice.talk();
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    return { ...harness, voice, tracks };
+  }
+
+  it("pauses the session instead of ending it, and picks it up on a new leg when bb is back", async () => {
+    const { voice, calls, tracks } = await live("mobile");
+    voice.toggleMute();
+    page.show("hidden");
+    await flush();
+    expect(voice.snapshot.phase).toBe("paused");
+    expect(voice.active).toBe(true);
+    expect(tracks[0]?.stopped).toBe(true);
+    expect(legs[0]?.closed).toBe(true);
+    expect(calls.find((call) => call.method === "session.pause")?.input).toEqual({ sessionId: "vp_1", reason: "bb left the screen" });
+    expect(calls.some((call) => call.method === "session.end")).toBe(false);
+
+    page.show("visible");
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    expect(calls.find((call) => call.method === "session.resume")?.input).toEqual({ sessionId: "vp_1", sdp: "v=0 offer 2" });
+    // A new microphone stream, muted as it was.
+    expect(tracks).toHaveLength(2);
+    expect(tracks[1]?.enabled).toBe(false);
+    expect(voice.snapshot.muted).toBe(true);
+    await voice.end("ended by you");
+    expect(tracks[1]?.stopped).toBe(true);
+    expect(legs[1]?.closed).toBe(true);
+  });
+
+  it("stays paused, with Resume, when the session cannot be picked up; ends here when the server ended it", async () => {
+    const first = await live("mobile");
+    first.resume.fail = new Error("The audio connection to OpenAI failed.");
+    page.show("hidden");
+    page.show("visible");
+    await flush();
+    expect(first.voice.snapshot.phase).toBe("paused");
+    expect(first.voice.snapshot.note).toContain("Tap Resume to try again");
+    expect(legs.at(-1)?.closed).toBe(true);
+    first.resume.fail = null;
+    await first.voice.resume();
+    expect(first.voice.snapshot.phase).toBe("live");
+    await first.voice.end("ended by you");
+
+    const second = await live("mobile");
+    second.resume.fail = new Error("That voice session is no longer live.");
+    second.resume.live = false;
+    page.show("hidden");
+    page.show("visible");
+    await flush();
+    expect(second.voice.snapshot.phase).toBe("idle");
+    expect(second.voice.snapshot.note).toBe("Voice ended while bb was away.");
+  });
+
+  it("follows the server when it paused the session, and ends a paused one on End", async () => {
+    const { voice, calls } = await live("mobile");
+    voice.onSignal({ sessionId: "vp_1", type: "state", state: "paused", reason: "the app stopped answering" });
+    expect(voice.snapshot.phase).toBe("paused");
+    expect(calls.some((call) => call.method === "session.pause")).toBe(false);
+    voice.toggle();
+    await flush();
+    expect(calls.find((call) => call.method === "session.end")?.input).toEqual({ sessionId: "vp_1", reason: "ended by you" });
+    expect(voice.snapshot.phase).toBe("idle");
+  });
+
+  it("mutes when the voice is asked to, as Mute does, and never unmutes", async () => {
+    const { voice, tracks } = await live("desktop");
+    voice.onSignal({ sessionId: "vp_1", type: "mute" });
+    expect(voice.snapshot.muted).toBe(true);
+    expect(tracks[0]?.enabled).toBe(false);
+    voice.onSignal({ sessionId: "vp_1", type: "mute" });
+    expect(voice.snapshot.muted).toBe(true);
+    voice.onSignal({ sessionId: "vp_other", type: "mute" });
+    voice.toggleMute();
+    expect(tracks[0]?.enabled).toBe(true);
+    await voice.end("ended by you");
+  });
+
+  it("keeps a desktop session running when its window is hidden", async () => {
+    const { voice, calls } = await live("desktop");
+    page.show("hidden");
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    expect(calls.some((call) => call.method === "session.pause" || call.method === "session.end")).toBe(false);
+    await voice.end("ended by you");
   });
 });

@@ -14,6 +14,7 @@ function setup() {
   const links: { url: string; label: string }[] = [];
   const sent: string[] = [];
   let ended = 0;
+  let muted = 0;
   let focused: string | null = null;
   const tools = new VoiceTools({
     bb,
@@ -24,6 +25,7 @@ function setup() {
     openLink: (url, label) => links.push({ url, label }),
     focused: () => focused,
     end: () => (ended += 1),
+    mute: () => (muted += 1),
     sent: (id) => sent.push(id),
   });
   let n = 0;
@@ -39,7 +41,7 @@ function setup() {
     await clock.advance(200);
     return tools.run(name, args, clock.now());
   };
-  return { clock, bb, debug, tools, opened, links, sent, say, run, ended: () => ended, focus: (id: string | null) => (focused = id) };
+  return { clock, bb, debug, tools, opened, links, sent, say, run, ended: () => ended, muted: () => muted, focus: (id: string | null) => (focused = id) };
 }
 
 describe("the tool list", () => {
@@ -231,6 +233,15 @@ describe("sends", () => {
     const { run, ended } = setup();
     expect(await run("end_session")).toEqual({ ok: true });
     expect(ended()).toBe(1);
+  });
+
+  it("mute the microphone without ending the session, and say how to unmute", async () => {
+    const { run, ended, muted } = setup();
+    const answer = await run("mute_microphone");
+    expect(answer).toMatchObject({ ok: true, muted: true });
+    expect(JSON.stringify(answer)).toContain("tap Unmute");
+    expect(muted()).toBe(1);
+    expect(ended()).toBe(0);
   });
 });
 

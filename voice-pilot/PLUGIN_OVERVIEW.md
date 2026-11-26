@@ -19,7 +19,8 @@ Nothing is merged, archived, deleted or published by voice, and no setting chang
 
 A Voice page in the sidebar with Talk, Mute and End, the session's state and its log; Talk in every thread's
 header; palette commands; a card in bb's notifications while you talk. It works on the desktop and on a
-phone with bb on screen.
+phone; switch away from bb on the phone and the session pauses, then picks up when you come back. Say
+"mute" to mute your microphone without ending the session.
 
 ## Voice hooks
 

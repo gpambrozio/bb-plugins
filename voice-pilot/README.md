@@ -39,6 +39,9 @@ subscription.
   a thread you messaged by voice finishing its turn, told from its reply: what the agent did, any pull
   request, anything it waits on you for, in a sentence or two (turns that finish together get a line each).
   The **Announce** setting can add every root thread, or turn this off.
+- **Mutes when you ask.** Say "mute" and it mutes your microphone, the same mute as the **Mute** button, and
+  the session goes on: it says so, and the card says to tap **Unmute** to talk again (once muted, it cannot
+  hear you, so unmuting is a tap).
 - **Never merges, archives, deletes or publishes, and never changes settings,** by voice. There is no tool
   for any of it; ask and it says to do it in bb.
 
@@ -51,7 +54,7 @@ subscription.
     server and `voice-pilot` added to its **Plugins that may use the sign-in** setting. That is an
     undocumented use of your ChatGPT subscription that OpenAI can close at any time, and voice time counts
     against your plan; read codex-realtime's README first.
-- On a phone, bb must stay on screen: the session ends when bb leaves it.
+- On a phone, the session pauses while bb is off the screen (below).
 
 ## Install
 
@@ -75,6 +78,12 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin voice-
   with **Talk** to start again.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
   limit.
+- **On a phone, switching away pauses it.** bb's mobile app stops when it leaves the screen, so the session
+  pauses rather than ends: the microphone and the call stop (no voice time is spent), and the card says
+  *Paused*, with **Resume** and **End**. Come back to bb and it picks up by itself: the voice says it is back,
+  remembers what you were talking about, and then tells you what happened while you were away (a thread
+  waiting on you, a finished turn). If it cannot pick up by itself, tap **Resume**. Half an hour away ends
+  the session. On the desktop and in a browser tab nothing changes: a hidden window keeps talking.
 - **Background noise is not answered.** The voice answers once what you said has been written down and holds
   real words; a turn that was only noise, a cough or an "um" is dropped, and the log marks it *Ignored*. That
   check makes an answer start about a third of a second later than it otherwise would.
@@ -94,6 +103,7 @@ Things to say:
 - "Which pull requests does the release thread list?" → "Open the second one."
 - "What's waiting on me?" → it reads the question → "The second one." / "Green." / your own words
 - "Approve it." → it reads back what it will send → "Yes."
+- "Mute." → it mutes your microphone; tap **Unmute** to talk again.
 - "Tell the login thread to also add a test for the error path."
 - "Start a thread in Acme Web to fix the CI timeout."
 - "Show me the release notes thread." · "Stop the payments thread." · "Goodbye."
@@ -206,7 +216,10 @@ your own bb can read it (no other plugin), and anything shaped like a credential
   the card then still says it opened it. A headless check opened them; bb's desktop app and mobile app have
   not been checked yet.
 - Checked live on the desktop (headless Chromium in a dev bb). The phone path is the same WebRTC code as
-  firstmate-voice's, checked in Safari; the bb mobile app's own web view has not been.
+  firstmate-voice's, checked in Safari; the bb mobile app's own web view has not been. The pause was checked
+  with a headless page passing for the mobile app, not on a phone: whether bb's mobile app lets the
+  microphone and the voice start again on return without a tap is not known yet; **Resume** is there for
+  when it does not.
 
 ## License
 

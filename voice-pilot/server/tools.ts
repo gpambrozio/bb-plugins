@@ -163,7 +163,13 @@ export const TOOLS: readonly ToolSpec[] = [
     description: "Step two: sends the decision decide_request read back, once the user has said yes to that read-back. Refused when they did not.",
     parameters: NONE,
   },
-  { name: "end_session", description: "Ends this voice session, when the user says goodbye or asks you to stop listening.", parameters: NONE },
+  { name: "end_session", description: "Ends this voice session, when the user says goodbye or asks you to stop listening. Not for a mute: that is mute_microphone.", parameters: NONE },
+  {
+    name: "mute_microphone",
+    description:
+      "Mutes the user's microphone, when they ask you to mute (\"mute\", \"mute yourself\", \"mute the mic\"). The session goes on: you can still speak, and they unmute by tapping Unmute. Never ends the session.",
+    parameters: NONE,
+  },
 ];
 
 /** The tools as the Realtime session takes them. */
@@ -187,6 +193,8 @@ export interface ToolDeps {
   focused(): string | null;
   /** Ends the session once the goodbye has been heard. */
   end(): void;
+  /** Mutes the microphone of the window holding the call, as its Mute button does. */
+  mute?(): void;
   /** A message went to this thread, or it was started: its finished turn is news. */
   sent?(threadId: string): void;
   /**
@@ -336,6 +344,15 @@ export class VoiceTools {
       case "end_session":
         this.deps.end();
         return { ok: true };
+      case "mute_microphone":
+        if (this.deps.mute === undefined) return fail("The microphone cannot be muted from here.");
+        this.deps.mute();
+        this.deps.debug.add("session", "Muted the microphone, as the user asked");
+        return {
+          ok: true,
+          muted: true,
+          note: "The microphone is muted now, and the session goes on: the user cannot be heard until they tap Unmute on the Voice Pilot card or the Voice page. Say so in one short sentence; they cannot unmute by voice.",
+        };
       default:
         return fail(`There is no tool ${name}.`);
     }

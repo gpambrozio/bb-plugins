@@ -12,6 +12,13 @@
  *   app's new leg connected.
  * - **The idle end.** Ten minutes with no speech, no response and no announcement end the session.
  * - **Hang up from the server,** and treat a call that already ended as ended.
+ * - **Paused, not ended, on the phone.** bb's mobile app is suspended when it leaves the screen, which cuts
+ *   the microphone and the audio. A session started there (`pausable`) is paused instead: its call is hung
+ *   up (no voice time is spent) and the session keeps what it knows (the recent talk, the numbered links,
+ *   the threads it sent to, the news that came meanwhile). When the app comes back it sends a new offer
+ *   (`resume`): a new call, seeded with a recap, says it is back and then the news. A pause that lasts
+ *   `PAUSE_END_MS` ends the session. A phone that went before it could say so (no heartbeat, or the call
+ *   gone) is paused the same way.
  * - Transcripts live in memory for the session only, and never reach the plugin log. The debug log
  *   (`debug-log.ts`) keeps them, with everything else, in memory until the next Talk, for the app only.
  * - **The voice hooks** (`hooks.ts`) run the owner's hook file on their machine as listening, the voice's
@@ -22,7 +29,7 @@ import type { BbPort, ThreadInfo } from "./bb-port";
 import { DebugLog, EMPTY_DEBUG_PAGE, type DebugPage } from "./debug-log";
 import { greetingItem } from "./greeting";
 import type { HookRunner, HookTarget, SessionHooks } from "./hooks";
-import { GREETING_NOW, RENEWAL_NOTE, standingInstructions } from "./instructions";
+import { GREETING_NOW, RENEWAL_NOTE, RESUME_NOTE, RESUME_NOW, standingInstructions } from "./instructions";
 import { UtteranceLog, isNoise } from "./policy";
 import { errorText, type Clock, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
 import { LinkList, parts, readableReply } from "./rich";
@@ -46,6 +53,10 @@ export const TOOL_OUTPUT_MAX = 4_000;
 /** The most of a finished turn's reply put in the conversation; read_reply has the rest. */
 export const FINISHED_REPLY_CHARS = 4_000;
 const RECAP_ITEMS = 10;
+/** A paused session ends after this long away. */
+export const PAUSE_END_MS = 30 * 60_000;
+/** The most news kept for a paused session, to be told on its return. */
+const MISSED_MAX = 20;
 /** How long a turn's transcript is waited for before announcements stop waiting. */
 export const WORDS_WAIT_MS = 6_000;
 
@@ -62,6 +73,10 @@ export interface SessionConfig {
   instructions: string;
   announce: AnnounceLevel;
 }
+
+/** Why a call is made: the session's start, the hour's renewal, or the app back on the screen after a pause. */
+type CallReason = "start" | "renew" | "resume";
+const CALL_REASONS: Record<CallReason, string> = { start: "the start", renew: "a renewal", resume: "back from a pause" };
 
 /** The session a call is created with. Tools follow on the sideband. */
 export function callSession(config: SessionConfig): Record<string, unknown> {
@@ -86,10 +101,11 @@ export function callSession(config: SessionConfig): Record<string, unknown> {
 
 /** What the server tells the app about a session, on the realtime channel. */
 export type SessionSignal =
-  | { sessionId: string; type: "state"; state: "live" | "ended"; reason?: string }
+  | { sessionId: string; type: "state"; state: "live" | "paused" | "ended"; reason?: string }
   | { sessionId: string; type: "renew" }
   | { sessionId: string; type: "open"; threadId: string; label?: string }
-  | { sessionId: string; type: "open-link"; url: string; label: string };
+  | { sessionId: string; type: "open-link"; url: string; label: string }
+  | { sessionId: string; type: "mute" };
 
 export interface SessionDeps {
   realtime: RealtimePort;
@@ -126,6 +142,8 @@ function traceSent(debug: DebugLog, event: Record<string, unknown>, standing: st
       const announcement = response?.metadata?.vp_announcement;
       if (typeof announcement === "string") debug.add("announce", `Announcement ${announcement} asked for (the standing instructions, then this)`, now);
       else if (event.event_id === "vp_greeting") debug.add("briefing", "Greeting asked for (the standing instructions, then this)", now);
+      else if (event.event_id === "vp_resume") debug.add("briefing", "The cue that the voice is back asked for (the standing instructions, then this)", now);
+      else if (typeof event.event_id === "string" && event.event_id.startsWith("vp_turn_")) debug.add("turn", "Asked for the response to what you said");
       else debug.add("turn", "Asked for the response that reads the tool's answer");
       break;
     }
@@ -240,6 +258,12 @@ export class VoiceSession {
   private readonly announcedWaits = new Set<string>();
   /** Every link read in this session, numbered: replies read with read_reply and finished turns' replies. */
   private readonly links = new LinkList();
+  /** Whether leaving the screen pauses this session rather than ending it: one started in bb's mobile app. */
+  pausable = false;
+  /** When the session was paused; null while it is not. */
+  private pausedAt: number | null = null;
+  /** News that came while paused, to be put to the next call when the app comes back. */
+  private missed: ((call: Call) => void)[] = [];
 
   constructor(
     readonly id: string,
@@ -268,6 +292,7 @@ export class VoiceSession {
         this.deps.publish({ sessionId: this.id, type: "open", threadId, ...(label === undefined ? {} : { label }) });
       },
       openLink: (url, label) => this.deps.publish({ sessionId: this.id, type: "open-link", url, label }),
+      mute: () => this.deps.publish({ sessionId: this.id, type: "mute" }),
       links: this.links,
       focused: () => this.focusedThread,
       end: () => this.later(GOODBYE_MS, () => void this.end("ended by voice")),
@@ -284,6 +309,10 @@ export class VoiceSession {
 
   get isEnded(): boolean {
     return this.ended;
+  }
+
+  get isPaused(): boolean {
+    return this.pausedAt !== null;
   }
 
   /** Makes the first call. Answers the SDP answer for the device. */
@@ -304,6 +333,7 @@ export class VoiceSession {
    */
   async renew(sdp: string): Promise<string> {
     if (this.ended) throw new Error("This voice session has ended.");
+    if (this.pausedAt !== null) throw new Error("This voice session is paused.");
     const previous = this.call;
     this.debug.add("session", "The app sent a renewal offer");
     if (this.retiring !== null) {
@@ -361,10 +391,10 @@ export class VoiceSession {
     if (thread === null || this.ended) return;
     if (news === "finished" && !this.touched.has(threadId) && !(this.config.announce === "all" && thread.isRoot)) return;
     if (news === "finished") return this.finished(thread, reply);
-    const call = this.call;
-    if (call === null) return;
-    const id = call.announcer.enqueue(newsAnnouncement(news, thread.title, thread.project));
-    this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" ${news}`);
+    this.onCall((call) => {
+      const id = call.announcer.enqueue(newsAnnouncement(news, thread.title, thread.project));
+      this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" ${news}`);
+    });
   }
 
   /**
@@ -382,17 +412,68 @@ export class VoiceSession {
         reply = null;
       }
     }
-    const call = this.call;
-    if (call === null || this.ended) return;
+    if (this.ended || (this.call === null && this.pausedAt === null)) return;
+    // Read now, so its links keep their numbers whenever it is told.
     const text = reply === null ? "" : readableReply(reply, this.links).text;
     const withReply = text !== "";
-    if (withReply) {
-      const [head = "", ...rest] = parts(text, FINISHED_REPLY_CHARS);
-      call.addItem(newsItem(thread.title, thread.project, head, rest.length > 0));
-    }
-    const turn = { title: thread.title, project: thread.project, withReply };
-    const id = call.announcer.enqueue(finishedAnnouncement([turn]), turn);
-    this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" finished${withReply ? ", with its reply" : ", no reply to tell"}`);
+    this.onCall((call) => {
+      if (withReply) {
+        const [head = "", ...rest] = parts(text, FINISHED_REPLY_CHARS);
+        call.addItem(newsItem(thread.title, thread.project, head, rest.length > 0));
+      }
+      const turn = { title: thread.title, project: thread.project, withReply };
+      const id = call.announcer.enqueue(finishedAnnouncement([turn]), turn);
+      this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" finished${withReply ? ", with its reply" : ", no reply to tell"}`);
+    });
+  }
+
+  /**
+   * bb left the phone's screen (`reason` says how it was noticed): the calls are hung up and the session waits
+   * for the app to come back. Answers whether the session is paused; one that is not `pausable` is not.
+   */
+  async pause(reason: string): Promise<boolean> {
+    if (this.ended || !this.pausable) return false;
+    if (this.pausedAt !== null && this.call === null) return true;
+    this.pausedAt ??= this.clock.now();
+    if (this.renewTimer !== null) this.clock.clearTimeout(this.renewTimer);
+    this.renewTimer = null;
+    const calls = [this.call, this.retiring].filter((call): call is Call => call !== null);
+    this.call = null;
+    this.retiring = null;
+    this.debug.add("session", `Paused: ${reason}. It picks up when bb is back on the screen`);
+    this.deps.log.info(`Voice session ${this.id} paused: ${reason}.`);
+    this.deps.publish({ sessionId: this.id, type: "state", state: "paused", reason });
+    await Promise.all(calls.map((call) => this.hangup(call)));
+    return true;
+  }
+
+  /**
+   * The app is back with a new offer: a new call, seeded with the recent talk and the news that came while
+   * away, which says it is back. An app that went away without the pause reaching the server resumes the
+   * same way: the call it left is hung up first.
+   */
+  async resume(sdp: string): Promise<string> {
+    if (this.ended) throw new Error("This voice session has ended.");
+    const away = this.pausedAt === null ? null : this.clock.now() - this.pausedAt;
+    // Paused until the new call is primed: news that comes meanwhile waits for it.
+    this.pausedAt ??= this.clock.now();
+    const calls = [this.call, this.retiring].filter((call): call is Call => call !== null);
+    this.call = null;
+    this.retiring = null;
+    await Promise.all(calls.map((call) => this.hangup(call)));
+    this.debug.add("session", `The app is back${away === null ? "" : ` after ${Math.round(away / 1000)} s`}: a new call picks the session up`);
+    const answer = await this.openCall(sdp, "resume");
+    this.lastAlive = this.clock.now();
+    this.deps.publish({ sessionId: this.id, type: "state", state: "live" });
+    return answer;
+  }
+
+  /** Runs `fn` on the live call, or keeps it for the next one while paused. */
+  private onCall(fn: (call: Call) => void): void {
+    if (this.call !== null && this.pausedAt === null) return fn(this.call);
+    if (this.pausedAt === null) return;
+    this.missed.push(fn);
+    if (this.missed.length > MISSED_MAX) this.missed.shift();
   }
 
   async end(reason: string): Promise<void> {
@@ -415,7 +496,7 @@ export class VoiceSession {
 
   // --- Calls -----------------------------------------------------------------------------------------
 
-  private async openCall(sdp: string, why: "start" | "renew"): Promise<string> {
+  private async openCall(sdp: string, why: CallReason): Promise<string> {
     const session = callSession(this.config);
     let made: { callId: string; answerSdp: string; connection?: string };
     try {
@@ -427,7 +508,7 @@ export class VoiceSession {
     const { callId, answerSdp } = made;
     const { instructions, ...rest } = session;
     const over = made.connection === undefined ? "" : ` over the ${made.connection === "api-key" ? "OpenAI API key" : "ChatGPT subscription"}`;
-    this.debug.add("briefing", `Call ${callId} made (${why === "start" ? "the start" : "a renewal"})${over}, with this session`, JSON.stringify(rest, null, 2));
+    this.debug.add("briefing", `Call ${callId} made (${CALL_REASONS[why]})${over}, with this session`, JSON.stringify(rest, null, 2));
     this.debug.add("briefing", "Standing instructions", String(instructions));
     if (this.ended) {
       void this.deps.realtime.hangup(callId).catch(() => undefined);
@@ -439,7 +520,7 @@ export class VoiceSession {
     this.openSideband(call, why);
     if (this.renewTimer !== null) this.clock.clearTimeout(this.renewTimer);
     this.renewTimer =
-      why === "start"
+      why !== "renew"
         ? this.clock.setTimeout(() => this.askRenewal(), RENEW_AFTER_MS)
         : this.clock.setTimeout(() => void this.end("the renewal did not connect on the device"), RENEW_ACK_MS);
     return answerSdp;
@@ -452,7 +533,7 @@ export class VoiceSession {
     this.renewTimer = this.clock.setTimeout(() => void this.end("the hour's time limit came with no renewal"), RENEW_GRACE_MS);
   }
 
-  private openSideband(call: Call, why: "start" | "renew"): void {
+  private openSideband(call: Call, why: CallReason): void {
     call.sideband = this.deps.realtime.openSideband(call.callId, {
       onOpen: () => {
         call.open = true;
@@ -473,18 +554,30 @@ export class VoiceSession {
           });
           return;
         }
-        void this.end("the connection to OpenAI was lost");
+        // A phone that left the screen without saying so took the call with it: wait for it to come back.
+        if (this.pausable) void this.pause("the connection to OpenAI was lost");
+        else void this.end("the connection to OpenAI was lost");
       },
     });
   }
 
   /** The sideband's first opening: the tools, then the running threads and the greeting (or a recap at a renewal). */
-  private async prime(call: Call, why: "start" | "renew"): Promise<void> {
+  private async prime(call: Call, why: CallReason): Promise<void> {
     call.send({ type: "session.update", session: { type: "realtime", tools: realtimeTools(), tool_choice: "auto" } });
-    if (why === "renew") {
+    if (why !== "start") {
       const recap = this.exchanges.slice(-RECAP_ITEMS).map((item) => `${item.who === "user" ? "User" : "Voice"}: ${item.text}`);
-      if (recap.length > 0) call.addItem(`${RENEWAL_NOTE}\n${recap.join("\n")}`);
+      const note = why === "renew" ? RENEWAL_NOTE : RESUME_NOTE;
+      if (recap.length > 0) call.addItem(`${note}\n${recap.join("\n")}`);
       // The old call stays up until the app says the new leg connected (`renewed`).
+      if (why === "renew") return;
+      // Back from a pause: the voice says so first, then the news that came meanwhile, at the next gap.
+      this.pausedAt = null;
+      this.lastActivity = this.clock.now();
+      this.lastAlive = this.clock.now();
+      call.announcer.responseStarted();
+      const missed = this.missed.splice(0);
+      for (const fn of missed) fn(call);
+      call.send({ type: "response.create", event_id: "vp_resume", response: { instructions: `${this.standing}\n\nNow: ${RESUME_NOW}` } });
       return;
     }
     try {
@@ -722,13 +815,19 @@ export class VoiceSession {
   }
 
   private checkIdle(): void {
+    if (this.pausedAt !== null) {
+      if (this.clock.now() - this.pausedAt >= PAUSE_END_MS) void this.end("bb was away for thirty minutes");
+      return;
+    }
     if (this.clock.now() - this.lastActivity >= IDLE_END_MS) {
       void this.end("quiet for ten minutes");
       return;
     }
     // OpenAI can keep a call whose page vanished for a long while; the app's heartbeat says it is gone.
     if (this.clock.now() - this.lastAlive >= ALIVE_TIMEOUT_MS) {
-      void this.end("the app stopped answering");
+      // A phone suspended before it could say it left the screen: paused, as if it had.
+      if (this.pausable) void this.pause("the app stopped answering");
+      else void this.end("the app stopped answering");
       return;
     }
     // A response this side asked for that never started must not hold announcements back for good.
@@ -800,7 +899,12 @@ export class VoiceSessions {
   }
 
   /** `hooks` is where this session's voice hooks run: the machine of the window that tapped Talk, or none. */
-  async start(sdp: string, hooks: HookTarget | null = null, threadId: string | null = null): Promise<{ sessionId: string; answerSdp: string }> {
+  async start(
+    sdp: string,
+    hooks: HookTarget | null = null,
+    threadId: string | null = null,
+    pausable = false,
+  ): Promise<{ sessionId: string; answerSdp: string }> {
     await this.live?.end("a new session took over");
     this.counter += 1;
     const id = `vp_${this.deps.clock.now().toString(36)}_${this.counter}`;
@@ -817,6 +921,7 @@ export class VoiceSessions {
       hooks === null ? null : (this.deps.hooks?.session(hooks, this.debug) ?? null),
     );
     session.focus(threadId);
+    session.pausable = pausable;
     this.live = session;
     try {
       return { sessionId: id, answerSdp: await session.start(sdp) };
@@ -841,6 +946,17 @@ export class VoiceSessions {
 
   async end(sessionId: string, reason: string): Promise<void> {
     if (this.live?.id === sessionId) await this.live.end(reason);
+  }
+
+  /** bb left the screen of the phone holding the call: answers whether the session is paused (false when it is not live). */
+  async pause(sessionId: string, reason: string): Promise<boolean> {
+    if (this.live?.id !== sessionId) return false;
+    return this.live.pause(reason);
+  }
+
+  /** The phone is back: a new call for the same session. */
+  async resume(sessionId: string, sdp: string): Promise<{ answerSdp: string }> {
+    return { answerSdp: await this.find(sessionId).resume(sdp) };
   }
 
   /** Thread news for the live session, if any. */

@@ -12,18 +12,23 @@
  */
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
-import { voice } from "./app/controller";
+import { voice, type VoiceState } from "./app/controller";
 import { DebugOpener, DebugTab } from "./app/debug";
 import { DEBUG_TAB, openDebugLog } from "./app/debug-view";
 import { VoiceHooksSection } from "./app/hooks-section";
 import { VOICE_PAGE, VoicePill, useVoiceState } from "./app/overlay";
 import { VoicePage } from "./app/page";
 
-/** The sidebar entry's badge: "Live" while a session is connecting or up. */
+/** The sidebar entry's badge: "Live" while a session is up, "Paused" while bb was off the phone's screen. */
+export function liveBadge(state: VoiceState) {
+  if (state.phase === "live") return { text: "Live", tone: "neutral" as const, label: "Voice Pilot is listening" };
+  if (state.phase === "paused") return { text: "Paused", tone: "neutral" as const, label: "Voice Pilot is paused" };
+  if (state.phase === "connecting" || state.phase === "resuming") return { text: "…", tone: "neutral" as const, label: "Voice Pilot is connecting" };
+  return null;
+}
+
 function useLiveBadge() {
-  const state = useVoiceState();
-  if (state.phase !== "connecting" && state.phase !== "live") return null;
-  return { text: state.phase === "live" ? "Live" : "…", tone: "neutral" as const, label: state.phase === "live" ? "Voice Pilot is listening" : "Voice Pilot is connecting" };
+  return liveBadge(useVoiceState());
 }
 
 export default definePluginApp((app) => {
@@ -65,7 +70,7 @@ export default definePluginApp((app) => {
     placement: "header",
     useData: () => {
       const state = useVoiceState();
-      return { active: state.phase === "connecting" || state.phase === "live" };
+      return { active: state.phase !== "idle" && state.phase !== "ending" };
     },
     item: ({ data }) => ({ label: data.active ? "End voice" : "Talk", detail: "Voice Pilot", icon: "Mic", run: () => voice.toggle() }),
   });

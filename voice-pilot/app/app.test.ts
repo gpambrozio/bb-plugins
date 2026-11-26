@@ -101,6 +101,17 @@ describe("starting and stopping", () => {
   });
 });
 
+describe("the sidebar badge", () => {
+  it("says Live, Paused while bb was off the phone's screen, and nothing when idle", async () => {
+    const { liveBadge } = await import("../app");
+    const idle = { phase: "idle" as const, muted: false, speaking: { user: false, voice: false }, note: null, opened: null };
+    expect(liveBadge({ ...idle, phase: "live" })?.text).toBe("Live");
+    expect(liveBadge({ ...idle, phase: "paused" })?.text).toBe("Paused");
+    expect(liveBadge({ ...idle, phase: "resuming" })?.text).toBe("…");
+    expect(liveBadge(idle)).toBeNull();
+  });
+});
+
 describe("the voice hooks' settings", () => {
   it("are a section of the plugin's settings page", async () => {
     const { settings } = await setUp();

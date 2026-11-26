@@ -20,6 +20,12 @@
 // With --noise, it first plays background noise into the microphone (a burst of white noise, a clap-like
 // burst and a mumbled "hmm") and checks that none of it is answered, then asks a real question and times the
 // answer from the end of the speech.
+//
+// With --pause, the page passes for bb's mobile app once loaded (a `window.bb.native` bridge, set after bb's
+// own app has started, which reads it only at start), so the session is a phone's. It is told something to
+// remember, then the page is hidden as bb leaving the phone's screen: the card must say Paused and the
+// server's log the pause. Shown again, the voice must say it is back, and recall the word. Then "mute the
+// microphone" must mute without ending, and words said while muted go unanswered.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -47,12 +53,13 @@ const { values } = parseArgs({
     /** A thread whose latest reply has a ```ui table of pull requests with links. */
     rich: { type: "string" },
     noise: { type: "boolean", default: false },
+    pause: { type: "boolean", default: false },
   },
 });
 const base = new URL(values.url);
 if (base.port === "38886" || base.port === "38887") throw new Error("That is the owner's bb. Use a dev bb.");
 if (values.bb === undefined) throw new Error("--bb is required.");
-if (values.question === undefined && values.rich === undefined && !values.noise) throw new Error("--question, --rich or --noise is required.");
+if (values.question === undefined && values.rich === undefined && !values.noise && !values.pause) throw new Error("--question, --rich, --noise or --pause is required.");
 const questionThread = values.question ?? "";
 const devBb = values.bb;
 mkdirSync(values.out, { recursive: true });
@@ -172,7 +179,8 @@ try {
     floor.start();
     void audio.resume();
     w.__events = [];
-    navigator.mediaDevices.getUserMedia = async () => destination.stream;
+    // A stream of its own each time, as a microphone gives: stopping one (a pause) leaves the next one live.
+    navigator.mediaDevices.getUserMedia = async () => new MediaStream(destination.stream.getAudioTracks().map((track) => track.clone()));
     w.__speak = async (b64: string) => {
       await audio.resume();
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -230,6 +238,7 @@ try {
     throw error;
   });
   await page.screenshot({ path: join(values.out, "page-idle.png") });
+  if (values.pause) await page.evaluate(() => Object.assign(window, { bb: { ...((window as unknown as { bb?: object }).bb ?? {}), native: {} } }));
   const t0 = Date.now();
   await talk.click();
   await page.getByText(/Voice Pilot · (Listening|Speaking|Hearing you)/u).waitFor({ timeout: 30_000 });
@@ -337,6 +346,62 @@ try {
   }
 
   // 3b. Doing things in bb: find a thread by topic and message it (--tell), then start a thread in the project.
+  // 3b. Leaving the phone's screen pauses; coming back resumes with what was said; "mute" mutes (--pause).
+  if (values.pause) {
+    const visibility = (state: "hidden" | "visible") =>
+      page.evaluate((next) => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => next });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, state);
+    const toldAt = await speak(page, "Please remember the word pineapple. Just say okay.");
+    await until("the voice's okay", 30_000, async () => (await voiceSaid(page, toldAt))[0]);
+    await quiet(page);
+    const hiddenAt = Date.now();
+    await visibility("hidden");
+    await page.getByText("Voice Pilot · Paused").first().waitFor({ timeout: 10_000 });
+    const paused = await until("the pause in the server's log", 10_000, () => debugEntries().find((entry) => entry.title.startsWith("Paused:")));
+    await page.screenshot({ path: join(values.out, "page-paused.png") });
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    const duringPause = (await events(page)).filter((event) => event.t > hiddenAt).length;
+    const shownAt = Date.now();
+    await visibility("visible");
+    await page.getByText(/Voice Pilot · (Listening|Speaking|Hearing you)/u).first().waitFor({ timeout: 30_000 });
+    const backMs = Date.now() - shownAt;
+    const cue = await until("the voice saying it is back", 30_000, async () => (await voiceSaid(page, shownAt))[0]);
+    const cueAudio = (await events(page)).find((event) => event.t > shownAt && event.type === "output_audio_buffer.started")?.t ?? null;
+    await quiet(page);
+    await page.screenshot({ path: join(values.out, "page-resumed.png") });
+    const recallAt = await speak(page, "What word did I ask you to remember?");
+    await until("the recall", 30_000, async () => (await voiceSaid(page, recallAt))[0]);
+    await quiet(page);
+    const recall = await voiceSaid(page, recallAt);
+    const muteAt = await speak(page, "Mute the microphone, please.");
+    await page.getByText("Voice Pilot · Muted").first().waitFor({ timeout: 30_000 });
+    await quiet(page);
+    const muteSaid = await voiceSaid(page, muteAt);
+    await page.screenshot({ path: join(values.out, "page-muted.png") });
+    const mutedAt = await speak(page, "Can you hear me? What threads are running?");
+    await new Promise((resolve) => setTimeout(resolve, 8_000));
+    const whileMuted = (await events(page)).filter((event) => event.t > mutedAt && (event.type === "response.created" || event.type === "input_audio_buffer.speech_started")).length;
+    await page.getByRole("button", { name: "Unmute", exact: true }).first().click();
+    await page.getByText(/Voice Pilot · (Listening|Speaking|Hearing you)/u).first().waitFor({ timeout: 10_000 });
+    report.pause = {
+      pausedLogged: paused.title,
+      dataChannelEventsWhilePaused: duringPause,
+      cardBackMs: backMs,
+      cue,
+      cueAudioMs: cueAudio === null ? null : cueAudio - shownAt,
+      recall,
+      recalled: recall.join(" ").toLowerCase().includes("pineapple"),
+      muteSaid,
+      eventsWhileMuted: whileMuted,
+      sessionLog: debugEntries()
+        .filter((entry) => entry.at > hiddenAt - 1_000 && (entry.kind === "session" || entry.title.startsWith("Call ") || entry.title.startsWith("The cue")))
+        .map((entry) => entry.title),
+    };
+    console.log("pause:", report.pause);
+  }
+
   if (values.actions) {
     if (values.project === undefined) throw new Error("--actions needs --project.");
     const threadsBefore = threadIds(values.project);

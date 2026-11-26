@@ -40,6 +40,10 @@ export const rpcContract = defineRpcContract({
   /** The app's new leg at a renewal connected: the server retires the old call. */
   "session.renewed": { input: z.object({ sessionId: z.string() }), output: z.null() },
   "session.end": { input: z.object({ sessionId: z.string(), reason: z.string().max(80) }), output: z.null() },
+  /** bb left the phone's screen: the session is paused, not ended (`paused` false when it is not live or not a phone's). */
+  "session.pause": { input: z.object({ sessionId: z.string(), reason: z.string().max(80) }), output: z.object({ paused: z.boolean() }) },
+  /** The phone is back: a new offer for the paused session's next call. */
+  "session.resume": { input: z.object({ sessionId: z.string(), sdp: Sdp }), output: z.object({ answerSdp: z.string() }) },
   "session.alive": { input: z.object({ sessionId: z.string(), threadId: ThreadId.optional() }), output: z.object({ live: z.boolean() }) },
   /** The thread on the screen of the window holding the call changed. */
   "session.focus": { input: z.object({ sessionId: z.string(), threadId: ThreadId }), output: z.null() },

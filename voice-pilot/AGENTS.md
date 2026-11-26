@@ -16,7 +16,7 @@ the voice.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wiring: settings, the app's RPCs (behind `server/rpc.ts`'s client-only gate), thread events → announcements, `onDispose`. |
-| `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, the greeting at start, event dispatch, tools, announcements, renewal at the hour's cap, the idle end, the app's heartbeat and the thread on its screen. |
+| `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, the greeting at start, event dispatch, tools, announcements, renewal at the hour's cap, the pause and resume on the phone, the idle end, the app's heartbeat and the thread on its screen. |
 | `server/tools.ts` | The tool list and `VoiceTools`, which runs each call: reads, sends, questions, approvals (two steps), links, `end_session`. |
 | `server/rich.ts`, `server/links.ts`, `app/links.ts` | A reply in full for the voice: bb's ```ui blocks parsed and flattened, links numbered for the session; what `open_link` may open; a link to this bb's own thread. |
 | `server/questions.ts` | bb's pending interactions as the voice reads and answers them: parse, read aloud, build answers. |
@@ -84,6 +84,20 @@ the voice.
   `create_response: true`, a mumbled "hmm" was answered ("Sounds like you're thinking…") in a live run; with
   this, it is not, and a real answer starts about 280 ms after you stop instead of at once
   (`e2e-results/2026-11-24-e2e-noise.json`). `interrupt_response` stays on, so noise can still cut the voice.
+- **On the phone, leaving the screen pauses; it never ends the session.** bb's mobile app is suspended when it
+  leaves the screen (its microphone and audio stop), so its sessions (`client: "mobile"`, `pausable`) pause:
+  the app lets the microphone and the leg go and says `session.pause`; the server hangs the call up (no voice
+  time is spent) and keeps the session: the recent talk, the `LinkList`, the threads sent to, and the news
+  that comes meanwhile (`missed`, at most 20). Back on the screen, the app makes a new microphone stream and
+  leg and sends `session.resume`: a new call, seeded with a `[voice-pilot-resumed]` recap, asks for
+  `vp_resume` ("I'm back") and then tells the news. A phone suspended before the pause got out is paused when
+  its heartbeat stops or its call goes; a pause that lasts `PAUSE_END_MS` (30 minutes) ends the session. The
+  desktop app and a browser tab are unchanged: a hidden window keeps talking, and a lost call or heartbeat
+  ends the session. Pause runs no hooks: the mobile app has none.
+- **"Mute" mutes, never ends.** `mute_microphone` publishes a `mute` signal; the window holding the call
+  disables its microphone track as its Mute button does, and the voice says how to unmute (a tap: once muted,
+  nothing said is heard, so there is no unmute by voice). The card says so too. A muted session still ends
+  after ten quiet minutes.
 - **The window holding the call is the one the voice drives.** `open_thread` publishes an `open` signal with
   the session id; only the controller holding that session navigates. The window reports the thread on its
   screen at Talk, on every heartbeat and when it changes, for `current_thread`.
@@ -145,7 +159,16 @@ choice and says it back, and ends on "goodbye"; it spends about a minute of voic
   headless Chromium; the card said "Opened example.com/acme/web/pull/20"), messaged the thread and told its
   finished turn from the reply. The run before it found the receiving agent reading "tell the release review
   thread to…" in the request's note as a request to message another thread; the note now names the thread.
+- `e2e-results/2026-11-25-e2e-pause.json` (`--pause`): the page set a `window.bb.native` bridge once bb's
+  app had loaded (bb reads it only at start), so the session was a phone's, and was hidden and shown again
+  as bb leaving the phone's screen. Hidden: the card said Paused, the server logged the pause and hung up the
+  call, and no call event came for the 10 s away. Shown: the card was back in 0.8 s, the voice said "I'm
+  back and listening." 1.7 s after, on a new call, and recalled the word it was told before the pause. "Mute
+  the microphone, please" muted (card: Muted, "Tap Unmute to talk again"), the voice said "You're muted now.
+  Tap Unmute to come back.", and a question asked while muted got no event at all.
 - **Not checked live:** several turns finishing together (unit-tested), a bb link opened from the voice
   (unit-tested), a link in a real browser tab or bb's mobile app, an approval by voice (unit-tested; needs
   a provider that asks), the API-key connection, a real microphone and speaker, bb's desktop app (the hooks
-  were driven by the rewrite above) and the phone.
+  were driven by the rewrite above) and the phone: a real suspension of bb's mobile app (whether its web view
+  lets a microphone be asked for again, and audio play, on return without a tap; Resume is the fallback),
+  and a phone that never got to say it left (the heartbeat path is unit-tested).

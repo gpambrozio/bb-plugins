@@ -30,7 +30,7 @@ export interface HooksRpcPort {
 }
 
 export function sessionHandlers(
-  sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "alive" | "focus" | "current" | "debugPage">,
+  sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "pause" | "resume" | "alive" | "focus" | "current" | "debugPage">,
   hooks: HooksRpcPort,
 ): ExperimentalPluginRpcHandlersWithContext<typeof rpcContract> {
   return {
@@ -38,7 +38,8 @@ export function sessionHandlers(
       requireApp(ctx?.experimental_caller);
       // A machine list that cannot be read runs no hooks; the call goes on.
       const hosts = await hooks.hosts().catch(() => []);
-      return sessions.start(sdp, hookTarget(client, hostId, hosts), threadId ?? null);
+      // Only bb's mobile app is suspended when it leaves the screen: its sessions pause there instead of ending.
+      return sessions.start(sdp, hookTarget(client, hostId, hosts), threadId ?? null, client === "mobile");
     },
     "session.renew": async ({ sessionId, sdp }, ctx) => {
       requireApp(ctx?.experimental_caller);
@@ -53,6 +54,14 @@ export function sessionHandlers(
       requireApp(ctx?.experimental_caller);
       await sessions.end(sessionId, reason);
       return null;
+    },
+    "session.pause": async ({ sessionId, reason }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return { paused: await sessions.pause(sessionId, reason) };
+    },
+    "session.resume": async ({ sessionId, sdp }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return sessions.resume(sessionId, sdp);
     },
     "session.alive": async ({ sessionId, threadId }, ctx) => {
       requireApp(ctx?.experimental_caller);

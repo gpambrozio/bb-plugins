@@ -7,8 +7,10 @@
  * Talk unlocks audio inside the tap, before anything is awaited (a browser tab and the mobile app play
  * nothing otherwise), asks for the microphone with echo cancellation, makes the offer, and lets the bb
  * server do the SDP exchange. Mute disables the microphone track; End tells the server, which hangs up.
- * The server asks for a renewal near the hour's cap and announces the end; on the phone, leaving the
- * screen ends the session, as bb's mobile app is suspended there. Talk also names the window's bb client
+ * The server asks for a renewal near the hour's cap and announces the end. In bb's mobile app, which is
+ * suspended when it leaves the screen, leaving it pauses the session: the microphone and the call go, the
+ * server keeps the session, and coming back makes a new leg on a new microphone stream (`session.resume`),
+ * the way a renewal does; Resume does the same by hand when that fails. Talk also names the window's bb client
  * and, in bb's desktop app, its machine (`app/machine.ts`), where the server runs the voice hooks.
  */
 import type { PluginRpcClient } from "@get-bb/plugin-sdk/app";
@@ -21,7 +23,7 @@ import { openLeg, type Leg, type SpeakingState } from "./webrtc";
 
 type Rpc = PluginRpcClient<typeof rpcContract>;
 
-export type VoicePhase = "idle" | "connecting" | "live" | "ending";
+export type VoicePhase = "idle" | "connecting" | "live" | "paused" | "resuming" | "ending";
 
 export interface VoiceState {
   phase: VoicePhase;
@@ -63,8 +65,13 @@ export class VoiceController {
    * while one is pending leaves that attempt to clean up its own microphone, leg and server session.
    */
   private attempt = 0;
-  private readonly onHidden = () => {
-    if (document.visibilityState === "hidden" && voicePlatform() === "mobile") void this.end("bb left the screen");
+  /** bb's mobile app leaving the screen pauses a live session, and coming back picks it up. */
+  private readonly onVisibility = () => {
+    if (voicePlatform() !== "mobile") return;
+    if (document.visibilityState === "hidden") {
+      if (this.state.phase === "connecting") void this.end("bb left the screen");
+      else if (this.state.phase === "live" || this.state.phase === "resuming") this.pause("bb left the screen");
+    } else if (this.state.phase === "paused") void this.resume();
   };
 
   /** The overlay hands its RPC client over once mounted; commands and buttons use it. */
@@ -97,8 +104,10 @@ export class VoiceController {
     for (const listener of this.listeners) listener();
   }
 
+  /** A session is up here: connecting, live, or paused while bb was off the phone's screen. */
   get active(): boolean {
-    return this.state.phase === "connecting" || this.state.phase === "live";
+    const { phase } = this.state;
+    return phase === "connecting" || phase === "live" || phase === "paused" || phase === "resuming";
   }
 
   /** Talk, or End when a session is already up. */
@@ -153,13 +162,85 @@ export class VoiceController {
       if (!current()) return void (await abandon("ended while connecting"));
       this.set({ phase: "live" });
       this.heartbeat = setInterval(() => void this.beat(), ALIVE_EVERY_MS);
-      document.addEventListener("visibilitychange", this.onHidden);
+      document.addEventListener("visibilitychange", this.onVisibility);
       await this.keepAwake(attempt);
     } catch (error) {
       // The server made the call but this side cannot hold it: hang it up now, not at the heartbeat's end.
       await abandon("the device could not connect");
       if (attempt === this.attempt) this.teardown(talkFailure(error));
     }
+  }
+
+  /**
+   * Lets the microphone and the call go and keeps the session: the server is told (`tell`), unless it is
+   * the one that paused it. A phone suspended before the word got out is paused there all the same, when its
+   * heartbeat stops.
+   */
+  pause(reason: string, tell = true): void {
+    const sessionId = this.sessionId;
+    if (sessionId === null || (this.state.phase !== "live" && this.state.phase !== "resuming")) return;
+    this.attempt += 1;
+    this.release();
+    this.set({ phase: "paused", speaking: { user: false, voice: false }, note: null });
+    if (tell) void this.rpc?.call("session.pause", { sessionId, reason }).catch(() => null);
+  }
+
+  /** Back on the screen, or Resume tapped: a new microphone stream and leg for the paused session. */
+  async resume(): Promise<void> {
+    const rpc = this.rpc;
+    const sessionId = this.sessionId;
+    const audio = this.audio;
+    if (rpc === null || sessionId === null || audio === null || this.state.phase !== "paused") return;
+    this.attempt += 1;
+    const attempt = this.attempt;
+    void audio.play().catch(() => undefined);
+    this.set({ phase: "resuming", note: null });
+    const current = () => attempt === this.attempt && this.sessionId === sessionId && this.state.phase === "resuming";
+    let stream: MediaStream | null = null;
+    let leg: Leg | null = null;
+    const drop = () => {
+      leg?.close();
+      for (const track of stream?.getTracks() ?? []) track.stop();
+    };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      for (const track of stream.getAudioTracks()) track.enabled = !this.state.muted;
+      if (!current()) return drop();
+      leg = await this.newLeg(stream, audio);
+      if (!current()) return drop();
+      const { answerSdp } = await rpc.call("session.resume", { sessionId, sdp: leg.offer });
+      if (!current()) return drop();
+      this.stream = stream;
+      this.leg = leg;
+      await leg.accept(answerSdp);
+      await leg.connected();
+      if (!current()) return;
+      this.set({ phase: "live" });
+      this.heartbeat = setInterval(() => void this.beat(), ALIVE_EVERY_MS);
+      await this.keepAwake(attempt);
+    } catch (error) {
+      if (!current()) return drop();
+      if (this.leg === leg) this.leg = null;
+      if (this.stream === stream) this.stream = null;
+      drop();
+      const { live } = await rpc.call("session.alive", { sessionId, threadId: this.focusedThread }).catch(() => ({ live: true }));
+      if (!current()) return;
+      if (!live) this.teardown("Voice ended while bb was away.");
+      else this.set({ phase: "paused", note: `Could not pick the session up: ${talkFailure(error).replace(/^Voice could not start: /u, "")} Tap Resume to try again.` });
+    }
+  }
+
+  /** The call's side of this window: the heartbeat, the leg, the microphone, the audio and the wake lock. */
+  private release(): void {
+    if (this.heartbeat !== null) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    this.leg?.close();
+    this.leg = null;
+    for (const track of this.stream?.getTracks() ?? []) track.stop();
+    this.stream = null;
+    if (this.audio !== null) this.audio.srcObject = null;
+    void this.wakeLock?.release().catch(() => undefined);
+    this.wakeLock = null;
   }
 
   private newLeg(stream: MediaStream, audio: HTMLAudioElement): Promise<Leg> {
@@ -232,7 +313,11 @@ export class VoiceController {
         ok = false;
       }
       this.set({ opened: { label: signal.label, ok } });
-    } else if (signal.state === "ended") this.teardown(signal.reason === undefined ? "The voice session ended." : `Voice ended: ${signal.reason}.`);
+    } else if (signal.type === "mute") {
+      // The voice was asked to mute: the same mute as the Mute button, and never an unmute.
+      if (this.state.phase === "live" && !this.state.muted) this.toggleMute();
+    } else if (signal.state === "paused") this.pause(signal.reason ?? "paused", false);
+    else if (signal.state === "ended") this.teardown(signal.reason === undefined ? "The voice session ended." : `Voice ended: ${signal.reason}.`);
   }
 
   /**
@@ -276,16 +361,8 @@ export class VoiceController {
 
   private teardown(note: string): void {
     this.attempt += 1;
-    if (this.heartbeat !== null) clearInterval(this.heartbeat);
-    this.heartbeat = null;
-    document.removeEventListener("visibilitychange", this.onHidden);
-    this.leg?.close();
-    this.leg = null;
-    for (const track of this.stream?.getTracks() ?? []) track.stop();
-    this.stream = null;
-    if (this.audio !== null) this.audio.srcObject = null;
-    void this.wakeLock?.release().catch(() => undefined);
-    this.wakeLock = null;
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    this.release();
     this.sessionId = null;
     this.set({ ...IDLE, note });
   }

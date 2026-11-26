@@ -10,8 +10,8 @@ const PLUGIN = { experimental_caller: { kind: "plugin", pluginId: "not-allowed" 
 function setup() {
   const calls: string[] = [];
   const sessions = {
-    start: async (sdp: string, target: unknown, threadId: string | null) => {
-      calls.push(`start ${sdp} ${JSON.stringify(target)} ${threadId}`);
+    start: async (sdp: string, target: unknown, threadId: string | null, pausable: boolean) => {
+      calls.push(`start ${sdp} ${JSON.stringify(target)} ${threadId}${pausable ? " pausable" : ""}`);
       return { sessionId: "vp_1", answerSdp: "answer" };
     },
     renewed: async () => void calls.push("renewed"),
@@ -20,6 +20,14 @@ function setup() {
       return { answerSdp: "answer" };
     },
     end: async () => void calls.push("end"),
+    pause: async (_id: string, reason: string) => {
+      calls.push(`pause ${reason}`);
+      return true;
+    },
+    resume: async (_id: string, sdp: string) => {
+      calls.push(`resume ${sdp}`);
+      return { answerSdp: "answer again" };
+    },
     alive: (_id: string, threadId?: string | null) => {
       calls.push(`alive ${threadId}`);
       return true;
@@ -51,6 +59,8 @@ describe("the session RPCs", () => {
     await expect(handlers["session.renew"]({ sessionId: "vp_1", sdp: "v=0 offer" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.renewed"]({ sessionId: "vp_1" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.end"]({ sessionId: "vp_1", reason: "x" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(handlers["session.pause"]({ sessionId: "vp_1", reason: "x" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(handlers["session.resume"]({ sessionId: "vp_1", sdp: "v=0 offer" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.alive"]({ sessionId: "vp_1" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.focus"]({ sessionId: "vp_1", threadId: null }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.current"]({}, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
@@ -89,8 +99,15 @@ describe("the session RPCs", () => {
     expect(calls).toEqual([
       'start v=0 offer {"hostId":"host_mine","name":"Studio"} null',
       'start v=0 offer {"hostId":null,"why":"this window\'s machine (host_elsewhere) is not one of bb\'s active machines"} null',
-      'start v=0 offer {"hostId":null,"why":"bb\'s mobile app runs no hooks"} null',
+      'start v=0 offer {"hostId":null,"why":"bb\'s mobile app runs no hooks"} null pausable',
     ]);
+  });
+
+  it("pause a phone's session when bb leaves its screen, and resume it with a new offer", async () => {
+    const { calls, handlers } = setup();
+    expect(await handlers["session.pause"]({ sessionId: "vp_1", reason: "bb left the screen" }, APP)).toEqual({ paused: true });
+    expect(await handlers["session.resume"]({ sessionId: "vp_1", sdp: "v=0 offer 2" }, APP)).toEqual({ answerSdp: "answer again" });
+    expect(calls).toEqual(["pause bb left the screen", "resume v=0 offer 2"]);
   });
 });
 
