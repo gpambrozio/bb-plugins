@@ -147,6 +147,19 @@ describe("runCommand", () => {
     for (const terminal of [running, editor, typing]) expect(terminal.typed).toEqual([]);
   });
 
+  it("types into a shell whose marks stopped (an ended ssh session left a command running), and reads it back once quiet", async () => {
+    const local = `${osc("7;file://mac/Users/me/app")}╭─me@mac ~/app\r\n╰─$ `;
+    const terminal = shell({
+      respond: (line) => [{ output: `${line}\r\n` }, { after: 300, output: `COMMAND PID\r\nnode 4242\r\n${local}` }],
+    });
+    terminal.print(local + "ssh nas\r\n" + prompt() + "exit\r\n" + osc("133;C") + "Connection to nas closed.\r\n" + local);
+    expect(await readTerminal(terminal.ports, TAB)).toContain("This shell stopped reporting its prompt and exit codes");
+    const text = await runCommand(terminal.ports, TAB, { command: "lsof -nP -iTCP -sTCP:LISTEN" }, never);
+    expect(terminal.typed).toEqual(["lsof -nP -iTCP -sTCP:LISTEN\r"]);
+    expect(text).toContain("once its output went quiet");
+    expect(text).toContain("node 4242");
+  });
+
   it("without shell integration, returns the terminal once the output has gone quiet", async () => {
     const terminal = shell({
       respond: (line) => [{ output: `${line}\r\n` }, { after: 500, output: "notes.txt\r\nme@mini ~ % " }],

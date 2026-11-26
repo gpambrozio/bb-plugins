@@ -241,6 +241,17 @@ not inject integration into the shells it opens. fish 4+ and nushell send OSC 13
 has zsh and bash lines (both checked live, bash on macOS's 3.2 with another `PROMPT_COMMAND`). Without
 marks everything but the card works.
 
+**Marks can stop mid-command; a prompt that reports its directory ends "running".** A remote shell over
+ssh may send OSC 133 when the local one does not. Its `exit` sends `C`, the connection closes before
+any `D`, and the local prompt that follows sends no mark, so the tracker stayed "running" for good and
+`terminal_run` refused every command (seen live: an Instax server tab after an ssh session to a NAS).
+Shells report OSC 7 as they draw a prompt, so an OSC 7 while "running" sets the phase to "unknown" and
+`hasIntegration()` to false (`stoppedMarks()`), until the next mark: the tools then treat the shell as
+one without marks. The command's start is kept, so a shell that reports its directory before its `D`
+still finishes it. A shell that sends neither marks nor OSC 7 after such a session would still be stuck.
+The tools replay history at the tab's size now: a program that drew for another width (that remote
+zsh, at 172 columns in a 144-column tab) can read back with mangled command lines.
+
 ## Checking it by hand
 
 The tests cannot reach bb's socket. Against a running bb, one local shell is enough: create it with

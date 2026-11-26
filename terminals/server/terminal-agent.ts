@@ -155,6 +155,9 @@ async function usableSession(ports: AgentTerminalPorts, tab: TabFacts): Promise<
 
 function stateLine(tracker: ShellTracker): string {
   if (tracker.fullScreen()) return "A full-screen program (an editor, a pager or similar) has the terminal.";
+  if (tracker.stoppedMarks()) {
+    return "This shell stopped reporting its prompt and exit codes: the OSC 133 marks came from another shell (one over ssh that has ended, say), and the shell at the prompt now sends none. Whether a command is running is not known.";
+  }
   if (!tracker.hasIntegration()) {
     return "This shell does not report its prompt or exit codes (no OSC 133 shell integration), so whether a command is running is not known.";
   }

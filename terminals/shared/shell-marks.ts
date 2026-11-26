@@ -170,6 +170,13 @@ export class ShellTracker {
   private lastFinished: FinishedCommand | null = null;
   private directory: string | null = null;
   private marksSeen = false;
+  /**
+   * A shell drew a prompt (it reported its directory, OSC 7) while the marks
+   * said a command was running, and no mark has come since: the shell that
+   * sent the marks is gone (an ssh session that ended after its remote shell
+   * sent `C` for `exit`) and the one at the prompt now sends none.
+   */
+  private marksStopped = false;
   private readonly listeners = new Set<(command: FinishedCommand) => void>();
   private readonly phaseListeners = new Set<(phase: ShellPhase) => void>();
   private readonly handlers: { dispose(): void }[];
@@ -186,14 +193,29 @@ export class ShellTracker {
       terminal.parser.registerOscHandler(633, mark(633)),
       terminal.parser.registerOscHandler(7, (data) => {
         this.directory = directoryFromOsc7(data) ?? this.directory;
+        // Shells report their directory as they draw a prompt, so the command the marks
+        // said was running is over as far as anyone can tell. Its start is kept: a `D`
+        // that follows (a shell that reports the directory first) still finishes it.
+        if (this.phaseNow === "running") {
+          this.marksStopped = true;
+          this.setPhase("unknown");
+        }
         return false;
       }),
     ];
   }
 
-  /** Whether the shell has sent any shell-integration mark. */
+  /**
+   * Whether the shell at the prompt sends shell-integration marks: it has sent
+   * some, and has not since drawn a prompt without them (see `stoppedMarks`).
+   */
   hasIntegration(): boolean {
-    return this.marksSeen;
+    return this.marksSeen && !this.marksStopped;
+  }
+
+  /** Whether marks came earlier but the shell at the prompt now sends none (an ssh session with them ended). */
+  stoppedMarks(): boolean {
+    return this.marksStopped;
   }
 
   phase(): ShellPhase {
@@ -261,6 +283,7 @@ export class ShellTracker {
 
   private apply(mark: ShellMark): void {
     this.marksSeen = true;
+    this.marksStopped = false;
     switch (mark.kind) {
       case "prompt-start":
         // A prompt with no end mark yet: whatever follows is prompt until `B`.

@@ -133,6 +133,38 @@ describe("ShellTracker", () => {
     ]);
   });
 
+  it("stops saying a command runs when a shell without marks draws its prompt (an ssh session that sent them ended)", async () => {
+    const { tracker, finished, write } = setUp();
+    // The local zsh reports only its directory; over ssh, the remote shell sends marks.
+    const local = `${osc("7;file://mac/Users/me/app")}╭─me@mac ~/app\r\n╰─$ `;
+    await write(local + "ssh nas\r\n");
+    await write(`${osc("133;A")}nas % ${osc("133;B")}` + run("df -h") + "Filesystem  Size\r\n" + done(0));
+    await write(`${osc("133;A")}nas % ${osc("133;B")}` + run("exit"));
+    expect(tracker.phase()).toBe("running");
+    // The connection closes before the remote shell sends `D`; the local prompt comes back.
+    await write("Connection to nas closed.\r\n" + local);
+    expect(tracker.phase()).toBe("unknown");
+    expect(tracker.hasIntegration()).toBe(false);
+    expect(tracker.stoppedMarks()).toBe(true);
+    expect(tracker.pendingInput()).toBeNull();
+    expect(finished.map((command) => command.command)).toEqual(["df -h"]);
+
+    // Marks again (another ssh session, or integration loaded): they count again.
+    await write(`${osc("133;A")}nas % ${osc("133;B")}`);
+    expect(tracker.hasIntegration()).toBe(true);
+    expect(tracker.stoppedMarks()).toBe(false);
+    expect(tracker.phase()).toBe("prompt");
+  });
+
+  it("still finishes a command when the shell reports its directory before the end mark", async () => {
+    const { tracker, finished, write } = setUp();
+    await write(prompt() + run("make") + "make: *** [all] Error 2\r\n");
+    await write(osc("7;file://mac/Users/me/app") + done(2) + prompt());
+    expect(finished.map(({ command, exitCode }) => ({ command, exitCode }))).toEqual([{ command: "make", exitCode: 2 }]);
+    expect(tracker.hasIntegration()).toBe(true);
+    expect(tracker.phase()).toBe("prompt");
+  });
+
   it("knows nothing of a shell that sends no marks", async () => {
     const { tracker, finished, write } = setUp();
     await write("me@mini ~ % ls nope\r\nls: nope: No such file or directory\r\nme@mini ~ % ");

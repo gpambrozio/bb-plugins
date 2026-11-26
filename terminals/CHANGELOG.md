@@ -27,6 +27,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   panel, open the plugin's settings, where you can read what the agent is told, edit it or add to it,
   and restore the built-in text. The terminal's name and machine are always given to the agent,
   whatever you write.
+- **After an ssh session ends,** the agent no longer finds the terminal stuck "running" a command when
+  the remote shell reported its prompts and your own shell does not: your prompt coming back is enough.
 - **Seeing failed commands** needs a shell that marks its prompts: fish 4 and later and nushell do; for
   zsh and bash, the README has lines to add to your shell's settings file.
 

@@ -97,7 +97,8 @@ The agent runs on your own agent provider, so a chat costs what any other bb thr
 The page knows a command failed only when the shell marks its prompts and each command's exit status
 with the OSC 133 sequences many terminals use. Without them, everything else works, including the bot
 button and both tools, but no card offers help, and the agent is told it cannot see exit codes: a
-command it runs is read back once its output goes quiet.
+command it runs is read back once its output goes quiet. The same goes once you leave a shell that sent
+the marks (an ssh session to a machine set up for them) for one that does not, from its next prompt.
 
 - **Out of the box:** fish 4 and later, and nushell. A prompt framework or shell-integration script
   you already load may send them too.
