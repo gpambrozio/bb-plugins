@@ -5,6 +5,7 @@ import type { MessageDispatchHookContext } from "@get-bb/plugin-sdk";
 import { describe, expect, it } from "vitest";
 
 import plugin, { INSTALLED_AT_KEY } from "./server";
+import { MACHINE_CHECKS_SERVICE } from "./server/machine-checks";
 import { SPAWNED_SETTING } from "./shared/settings";
 
 const PLUGIN_ID = "code-mode";
@@ -21,6 +22,7 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
   const metadata = new Map<string, Record<string, unknown>>();
   const turns = new Set<string>();
   const hostCalls: string[] = [];
+  let loading = true;
   const projectNames = new Map<string, string>([
     [PROJECT, PROJECT_NAME],
     ["proj_other_checkout", PROJECT_NAME],
@@ -59,6 +61,8 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
       },
     } as never,
     experimental_callHostRpc: (call) => {
+      // As bb does: no host calls while the plugin's factory is still loading.
+      if (loading) throw new Error("host plugin calls are unavailable during factory registration; call from a handler, service, or timer");
       hostCalls.push(call.hostId);
       return options.hostReady === false ? { ok: false, reason: "Windows" } : { ok: true, path: LAUNCHER };
     },
@@ -66,6 +70,9 @@ async function setup(options: { settings?: Record<string, string>; installedAt?:
   if (options.installedAt !== undefined) await bb.storage.kv.set(INSTALLED_AT_KEY, options.installedAt);
   if (options.storedConfig !== undefined) await bb.storage.kv.set("config", options.storedConfig);
   await plugin(bb);
+  // Anything the factory left running finishes here, still counted as loading.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  loading = false;
 
   function thread(id: string, overrides: Partial<Thread> = {}): Thread {
     const made = makeThreadResponse({ id, projectId: PROJECT, providerId: "claude-code", status: "pending", createdAt: Date.now() + 1, ...overrides });
@@ -257,6 +264,18 @@ describe("project defaults and machines", () => {
     expect(t.metadata.get("thr_cm")?.codeMode).toMatchObject({ codeMode: "off", reason: expect.stringContaining("wrapper isn't ready") });
     expect(await t.resolve("thr_cm")).toEqual([]);
     expect(t.harness.inspection.logEntries.some((entry) => entry.message.includes("wrapper is not ready"))).toBe(true);
+  });
+
+  it("check the machines that are on after loading, never while loading (regression: both Send rows greyed after a reload)", async () => {
+    const t = await setup({ storedConfig: { projectNames: {}, hosts: { [HOST]: true } } });
+    expect(t.hostCalls).toEqual([]);
+    expect(await t.harness.behavior.callRpc("hosts.status", {})).toEqual({});
+    const service = t.harness.behavior.runService(MACHINE_CHECKS_SERVICE);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.hostCalls).toEqual([HOST]);
+    expect(await t.harness.behavior.callRpc("hosts.status", {})).toEqual({ [HOST]: { ok: true, message: "Wrapper ready" } });
+    service.controller.abort();
+    await service.done;
   });
 
   it("tell the app each checked machine's wrapper status", async () => {

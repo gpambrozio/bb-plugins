@@ -9,6 +9,7 @@ import { CONFIG_TAG, HOSTS_TAG, rpcContract, threadTag } from "./shared/contract
 import { hostContract } from "./shared/host-contract";
 import { SPAWNED_LABELS, SPAWNED_OPTIONS, SPAWNED_SETTING, spawnedRule, type SpawnedRule } from "./shared/settings";
 import { createConfigStore } from "./server/config-store";
+import { MACHINE_CHECKS_SERVICE, runMachineChecks } from "./server/machine-checks";
 import { CLAUDE_CODE, createPolicy } from "./server/policy";
 import { createRecords } from "./server/records";
 import { createWrappers } from "./server/wrappers";
@@ -129,12 +130,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // Write the wrapper on every machine that is turned on, so the first Code Mode thread there does
-  // not wait for it, and so a launcher naming an old Node is rewritten after a bb update.
-  void config
-    .get()
-    .then((current) => {
-      for (const [hostId, on] of Object.entries(current.hosts)) if (on) void wrappers.check(hostId);
-    })
-    .catch((error: unknown) => bb.log.warn(`Could not read Code Mode's switches on load: ${String(error)}`));
+  // Writes the wrapper on every machine that is on, once loading is done (server/machine-checks.ts).
+  bb.background.service(MACHINE_CHECKS_SERVICE, {
+    start: (signal) => runMachineChecks(signal, { config: () => config.get(), check: (hostId) => wrappers.check(hostId), log: bb.log }),
+  });
 }

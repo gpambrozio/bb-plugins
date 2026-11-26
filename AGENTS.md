@@ -400,6 +400,12 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
   (`resolveHostEnvironment`) before sending each one to the daemon, so a call made after another can
   reach the host first. Number calls whose order matters and reorder them on the host, or wait for
   each answer before the next call.
+- **The server can't call a host while its plugin loads.** A `bb.hosts.experimental_client(...).call`
+  made from the factory, or from a promise the factory left running, fails with "host plugin calls are
+  unavailable during factory registration; call from a handler, service, or timer" (bb 0.50.1). Start
+  load-time host work from a `bb.background.service`, which runs once loading is done
+  (`code-mode/server/machine-checks.ts`). The SDK's fake host does not refuse such calls, so make the
+  fake's `experimental_callHostRpc` throw until the factory has finished (`code-mode/server.test.ts`).
 - **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
   afterwards. Take the lease in the handler that starts the background work, and release it on every
   way that work ends.

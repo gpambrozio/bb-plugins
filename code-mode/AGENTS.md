@@ -59,6 +59,12 @@ no restart. Read the repository's `AGENTS.md` first.
   statuses (`hosts.status`, tag `hosts`) and the names there. A row can be greyed out, never hidden, and
   its reason can't be shown in the menu (SDK 0.6.157). The composer's `selection.environment` names the
   machine (`host` or `provider` environments; checked live, "Project checkout" included).
+- **No host call from the factory.** bb refuses host calls while a plugin loads ("host plugin calls are
+  unavailable during factory registration"). The load-time wrapper check once ran from the factory, failed
+  on every machine, and was kept as each machine's status, so after any reload both Send-menu rows were
+  greyed out on a machine that was on. The checks run in the `machine-checks` background service
+  (`server/machine-checks.ts`), which also re-checks machines that are on but not ready every five
+  minutes. `server.test.ts`'s fake refuses host calls while loading.
 - **The machine switch gates new decisions only.** A Code Mode thread keeps getting the wrapper after its
   machine is turned off; the wrapper is written on demand.
 - **The dispatch hook runs under bb's server-wide dispatch lock**: no slow work there. Config is cached in
