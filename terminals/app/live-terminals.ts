@@ -15,7 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { forwardLateImeInput } from "./bb-late-ime/terminal-late-ime-input";
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
-import { directoryFromOsc7 } from "./project-match";
+import { lastLines, ShellTracker, type FinishedCommand, type ShellPhase } from "../shared/shell-marks";
 import { currentFontFamily, currentTheme } from "./theme";
 import { rememberViewport, restoreViewport, type ViewportPlace } from "./viewport";
 
@@ -48,6 +48,16 @@ export interface LiveTerminal {
    * shells send on every prompt), or null when it never has.
    */
   cwd(): string | null;
+  /** The last command the shell said finished (OSC 133, shared/shell-marks.ts), or null. */
+  lastCommand(): FinishedCommand | null;
+  /** Where the shell is, as its marks say; `unknown` for a shell that sends none. */
+  phase(): ShellPhase;
+  /** Calls `listener` when a command starts or finishes, or a prompt shows; returns the unsubscribe. */
+  onShellChange(listener: () => void): () => void;
+  /** Calls `listener` on each keystroke the user sends from this window; returns the unsubscribe. */
+  onUserInput(listener: () => void): () => void;
+  /** The last `count` lines the terminal shows, scrollback included, as text. */
+  recentText(count: number): string;
 }
 
 /**
@@ -87,12 +97,9 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
 
-  let workingDirectory: string | null = null;
-  term.parser.registerOscHandler(7, (data) => {
-    workingDirectory = directoryFromOsc7(data) ?? workingDirectory;
-    // Not handled: xterm has nothing of its own to do with it.
-    return false;
-  });
+  // Prompt and command marks (OSC 133 / 633) and the directory (OSC 7), as the shell sends them.
+  const tracker = new ShellTracker(term);
+  const userInputListeners = new Set<() => void>();
 
   let opened = false;
   /** Sends what an iOS keyboard inserts too late for xterm; set up once the terminal is open. */
@@ -125,6 +132,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
     // Typing here makes this the window in use: take the shell back if another window resized it.
     if (shown) sizing.typed(measure);
     connection.sendInput(data);
+    for (const listener of userInputListeners) listener();
   });
   term.onBinary((data) => {
     const bytes = new Uint8Array(data.length);
@@ -198,10 +206,27 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       const subscription = term.onScroll(listener);
       return () => subscription.dispose();
     },
-    cwd: () => workingDirectory,
+    cwd: () => tracker.cwd(),
+    lastCommand: () => tracker.last(),
+    phase: () => tracker.phase(),
+    onShellChange(listener) {
+      const stopPhase = tracker.onPhase(() => listener());
+      const stopFinished = tracker.onFinished(() => listener());
+      return () => {
+        stopPhase();
+        stopFinished();
+      };
+    },
+    onUserInput(listener) {
+      userInputListeners.add(listener);
+      return () => userInputListeners.delete(listener);
+    },
+    recentText: (count) => lastLines(term, count).text,
     dispose() {
       shown = false;
       listeners.clear();
+      userInputListeners.clear();
+      tracker.dispose();
       connection.dispose();
       lateImeInput?.dispose();
       term.dispose();

@@ -7,21 +7,40 @@
 // bb (app/connection.ts). See AGENTS.md.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import { AGENT_TYPED, type AgentTyped } from "./shared/agent";
 import { rpcContract } from "./shared/contract";
 import { selectableHosts } from "./shared/host-choice";
 import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "./shared/tabs";
+import { registerAgent } from "./server/agent";
+import { AgentLinkSchema, createAgentLinks } from "./server/agent-links";
 import { createTerminalsService } from "./server/service";
+import type { AgentTerminalPorts } from "./server/terminal-agent";
 import { newTerminalId } from "./server/terminal-id";
 
 export type { RpcContract } from "./shared/contract";
 
 const TABS_KEY = "tabs";
 const CLOSING_KEY = "closing";
+const AGENTS_KEY = "agents";
 /** How often a tab closed while its shell was opening is checked on, while there is one. */
 const SETTLE_INTERVAL_MS = 5_000;
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && "status" in error && error.status === 404;
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 export default async function plugin(bb: BbPluginApi) {
@@ -30,17 +49,25 @@ export default async function plugin(bb: BbPluginApi) {
     return selectableHosts(all, config.primaryHostId);
   }
 
+  /** The tabs as last read or written, for what cannot wait for storage (`agents.configure`). */
+  let cachedTabs: readonly Tab[] = [];
+  async function loadTabs(): Promise<Tab[]> {
+    const stored = await bb.storage.kv.get<unknown>(TABS_KEY);
+    const parsed = TabSchema.array().safeParse(stored ?? []);
+    if (!parsed.success) {
+      bb.log.warn(`ignoring an unreadable tab list: ${parsed.error.message}`);
+      return [];
+    }
+    cachedTabs = parsed.data;
+    return parsed.data;
+  }
+
   const service = createTerminalsService({
-    load: async () => {
-      const stored = await bb.storage.kv.get<unknown>(TABS_KEY);
-      const parsed = TabSchema.array().safeParse(stored ?? []);
-      if (!parsed.success) {
-        bb.log.warn(`ignoring an unreadable tab list: ${parsed.error.message}`);
-        return [];
-      }
-      return parsed.data;
+    load: loadTabs,
+    save: async (tabs: Tab[]) => {
+      await bb.storage.kv.set(TABS_KEY, tabs);
+      cachedTabs = tabs;
     },
-    save: (tabs: Tab[]) => bb.storage.kv.set(TABS_KEY, tabs),
     loadClosing: async () => {
       const parsed = ClosingSchema.array().safeParse((await bb.storage.kv.get<unknown>(CLOSING_KEY)) ?? []);
       if (!parsed.success) {
@@ -81,9 +108,54 @@ export default async function plugin(bb: BbPluginApi) {
     warn: (message) => bb.log.warn(message),
   });
 
+  const links = createAgentLinks({
+    load: async () => {
+      const parsed = AgentLinkSchema.array().safeParse((await bb.storage.kv.get<unknown>(AGENTS_KEY)) ?? []);
+      if (!parsed.success) {
+        bb.log.warn(`ignoring an unreadable list of agent chats: ${parsed.error.message}`);
+        return [];
+      }
+      return parsed.data;
+    },
+    save: (list) => bb.storage.kv.set(AGENTS_KEY, list),
+    now: () => Date.now(),
+  });
+  await links.load();
+  await loadTabs().catch(() => []);
+
+  const terminalPorts: AgentTerminalPorts = {
+    session: async (terminalId) => {
+      try {
+        return await bb.sdk.terminals.get({ terminalId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    output: (args) => bb.sdk.terminals.output(args),
+    input: async (terminalId, data) => {
+      await bb.sdk.terminals.input({ terminalId, dataBase64: Buffer.from(data, "utf8").toString("base64") });
+    },
+    announce: (terminalId, command) => {
+      const payload: AgentTyped = { terminalId, command };
+      bb.realtime.publish(AGENT_TYPED, payload);
+    },
+    sleep,
+    now: () => Date.now(),
+  };
+  const agent = registerAgent(bb, {
+    links,
+    tabs: loadTabs,
+    cachedTabs: () => cachedTabs,
+    ports: terminalPorts,
+    sleep: (ms) => sleep(ms),
+  });
+
   bb.rpc.register(rpcContract, {
     hosts: async () => ({ hosts: await hosts() }),
-    list: async () => ({ tabs: await service.list() }),
+    list: async () => ({
+      tabs: (await service.list()).map((tab) => ({ ...tab, agentThreadId: links.threadFor(tab.terminalId) })),
+    }),
     open: (input) => service.open(input),
     rename: async ({ terminalId, name }) => {
       await service.rename(terminalId, name);
@@ -96,6 +168,18 @@ export default async function plugin(bb: BbPluginApi) {
     close: async ({ terminalId }) => {
       await service.close(terminalId);
       wakeSettler();
+      await agent.forgetAgent(terminalId);
+      return {};
+    },
+    startAgent: async ({ terminalId, request }) => {
+      const result = await agent.startAgent(terminalId, request);
+      bb.realtime.publish(TABS_CHANGED, {});
+      return result;
+    },
+    askAgent: ({ terminalId, text }) => agent.askAgent(terminalId, text),
+    forgetAgent: async ({ terminalId }) => {
+      await agent.forgetAgent(terminalId);
+      bb.realtime.publish(TABS_CHANGED, {});
       return {};
     },
   });
@@ -116,6 +200,11 @@ export default async function plugin(bb: BbPluginApi) {
         await service.prune();
       } catch (error) {
         bb.log.warn(`could not drop ended tabs: ${String(error)}`);
+      }
+      try {
+        await agent.prune();
+      } catch (error) {
+        bb.log.warn(`could not let go of finished agent chats: ${String(error)}`);
       }
       while (!signal.aborted) {
         let pending: boolean;

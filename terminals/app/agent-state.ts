@@ -1,0 +1,89 @@
+/**
+ * This window's state for the agent panel, kept in module scope so it
+ * outlives the page as the terminals do (app/live-terminals.ts): whether the
+ * panel is open, what its new-thread composer starts with for each tab, the
+ * failed commands the user waved away, and the commands the agent typed.
+ * No React and no SDK.
+ */
+import type { FinishedCommand } from "../shared/shell-marks";
+
+type Listener = () => void;
+
+/** What a tab's new-thread composer starts with: the prompt, and a draft key so a new ask starts a new draft. */
+export interface AgentSeed {
+  prompt: string;
+  draftKey: string;
+}
+
+/** The last command the agent typed into a tab, until the user types there. */
+export interface AgentTypedNote {
+  command: string;
+  at: number;
+}
+
+export interface AgentPanelState {
+  open: boolean;
+  seeds: ReadonlyMap<string, AgentSeed>;
+  typed: ReadonlyMap<string, AgentTypedNote>;
+}
+
+/** A short, stable hash of a prompt, for its draft key. */
+function hash(text: string): string {
+  let value = 5381;
+  for (let index = 0; index < text.length; index += 1) value = ((value * 33) ^ text.charCodeAt(index)) >>> 0;
+  return value.toString(36);
+}
+
+export function createAgentPanelStore() {
+  let state: AgentPanelState = { open: false, seeds: new Map(), typed: new Map() };
+  const listeners = new Set<Listener>();
+  const dismissed = new WeakSet<FinishedCommand>();
+  const set = (next: AgentPanelState) => {
+    state = next;
+    for (const listener of listeners) listener();
+  };
+  return {
+    get: () => state,
+    subscribe(listener: Listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** Opens the panel; with a prompt, the tab's composer starts on it (a new draft for a new prompt). */
+    open(terminalId: string, prompt: string | null) {
+      const seeds = new Map(state.seeds);
+      if (prompt !== null) seeds.set(terminalId, { prompt, draftKey: `terminals-agent:${terminalId}:${hash(prompt)}` });
+      set({ ...state, open: true, seeds });
+    },
+    close() {
+      if (state.open) set({ ...state, open: false });
+    },
+    /** The tab's composer has started its thread: the next one starts afresh. */
+    clearSeed(terminalId: string) {
+      if (!state.seeds.has(terminalId)) return;
+      const seeds = new Map(state.seeds);
+      seeds.delete(terminalId);
+      set({ ...state, seeds });
+    },
+    noteTyped(terminalId: string, command: string, at: number) {
+      const typed = new Map(state.typed);
+      typed.set(terminalId, { command, at });
+      set({ ...state, typed });
+    },
+    clearTyped(terminalId: string) {
+      if (!state.typed.has(terminalId)) return;
+      const typed = new Map(state.typed);
+      typed.delete(terminalId);
+      set({ ...state, typed });
+    },
+    /** The user waved the offer for this failed command away. */
+    dismiss(command: FinishedCommand) {
+      dismissed.add(command);
+      set({ ...state });
+    },
+    isDismissed: (command: FinishedCommand) => dismissed.has(command),
+  };
+}
+
+export type AgentPanelStore = ReturnType<typeof createAgentPanelStore>;
+
+export const windowAgentPanel: AgentPanelStore = createAgentPanelStore();
