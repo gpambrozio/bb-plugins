@@ -92,8 +92,9 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin voice-
   everything since you last tapped Talk, each with its time, marked *Debug*. The instructions and session
   the call was made with, what was put in the voice's conversation, what you said and what the voice said,
   tool calls and their answers, each message sent and each question answered, announcements, hook runs and
-  errors. *Hide turns* hides the speech and audio markers; *Copy* copies it all as text. It shows the last
-  session after one ends.
+  errors. *Hide turns* hides the speech and audio markers; *Copy* copies it all as text; *Settings* opens Voice
+  Pilot's settings page (if a later bb moves that page, a note says it is under Settings → Plugins → Voice
+  Pilot). It shows the last session after one ends.
 
   ![The Voice page on a phone](docs/screenshots/voice-page-phone-light.png)
 

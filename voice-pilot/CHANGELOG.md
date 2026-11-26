@@ -27,3 +27,4 @@
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
   talk.
 - The Voice page shows the session's state and its log: what you said, what the voice said, what it did.
+  The log's Settings button opens Voice Pilot's settings.

@@ -26,7 +26,7 @@ the voice.
 | `server/announce.ts` | The announcer (from firstmate-voice) and the scripts for thread news. |
 | `server/credentials.ts`, `server/openai-call.ts`, `server/openai-port.ts` | The two connections (API key, ChatGPT through codex-realtime); the SDP exchange, hangup and sideband. |
 | `server/hooks.ts`, `host.ts`, `host/*`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks, unchanged from firstmate-voice but for the names (`VOICE_PILOT_HOOK`, `VOICE_PILOT_REASON`, `~/.config/voice-pilot/hook`). |
-| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The session's log, its client-only RPC, the side-panel tab and the view the Voice page embeds. |
+| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts`, `app/open-settings.ts` | The session's log, its client-only RPC, the side-panel tab, the view the Voice page embeds, and its Settings button. |
 | `server/briefing/*` | briefing's server code from PR #127 at `da2a3d7`, without its CLI; `sdk-ports.ts` exports `toRow`, `chunks` and `ListRow` for `bb-port.ts`. |
 | `app.tsx`, `app/controller.ts`, `app/overlay.tsx`, `app/page.tsx`, `app/webrtc.ts`, `app/platform.ts` | The registrations; the per-window controller; the toast (an app overlay that holds the call); the Voice page; the WebRTC leg. |
 | `scripts/e2e-desktop.ts` | The live run (below). |
@@ -126,6 +126,11 @@ the voice.
 - **UI:** a Voice page in the sidebar (Talk, End, Mute, state, the log; a *Live* badge on its entry), Talk in
   every thread's header (bb folds a plugin's header actions into one split button, with the debug log in its
   menu), palette commands, the toast while live, and the debug tab in a thread's side panel.
+- **Settings button:** the debug view's *Settings* pushes bb's internal `/settings/plugins/voice-pilot` route
+  (`app/open-settings.ts`, as `firstmate-crew` does). A moved route lands on bb's not-found page without
+  failing, so the Voice hooks section, drawn only on that page, marks it shown on mount; when it has not
+  within three seconds, a toast says where the settings are. Keep that section on the settings page, or move
+  the mark with it. Live (bb 0.50.1): the section mounted 84 ms after the tap.
 
 ## Live checks
 

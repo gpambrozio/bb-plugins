@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import { HOOK_EVENT_ENV, HOOK_FILE_SHOWN, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookFileStatus } from "../shared/hooks";
 import { createLocalHostLookup } from "./machine";
+import { settingsPage } from "./open-settings";
 import { voicePlatform } from "./platform";
 
 interface MachineStatus {
@@ -57,6 +58,9 @@ export function VoiceHooksSection() {
   const [error, setError] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
   const here = useThisMachine();
+
+  // This section is drawn only on Voice Pilot's settings page: its mount tells the debug view's Settings button the page showed.
+  useEffect(() => settingsPage.shown(), []);
 
   useEffect(() => {
     let live = true;

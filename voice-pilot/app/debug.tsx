@@ -9,6 +9,7 @@
  * thread's: it opens the tab when the toast (outside every thread view) or a declined command asked for it.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 import {
   experimental_copyToClipboard as copyToClipboard,
   experimental_Icon as Icon,
@@ -21,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import type { DebugEntry } from "../server/debug-log";
+import { SETTINGS_WHERE, openPluginSettings } from "./open-settings";
 import { EMPTY_DEBUG, KIND_LABELS, asText, clockTime, debugOpen, isLong, kindTone, mergePage, nextSeq, openDebugTab, sinceStart, visible, type DebugState } from "./debug-view";
 
 const POLL_MS = 1_500;
@@ -85,6 +87,11 @@ function Entry({ entry, startedAt }: { entry: DebugEntry; startedAt: number | nu
   );
 }
 
+/** Opens Voice Pilot's settings page, and says where it is when it does not show. */
+function openSettings(): void {
+  openPluginSettings({ win: window, onMissing: () => toast.info(SETTINGS_WHERE) });
+}
+
 /** The debug tab in a thread's side panel: the log, read while the tab shows. */
 export function DebugTab() {
   return <DebugLogView active={useTabVisible()} />;
@@ -127,6 +134,10 @@ export function DebugLogView({ active }: { active: boolean }) {
           <Button type="button" size="sm" variant="outline" onClick={() => void copy()}>
             <Icon name={copied ? "Check" : "Copy"} />
             {copied ? "Copied" : "Copy"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={openSettings}>
+            <Icon name="Settings" />
+            Settings
           </Button>
         </div>
       </div>
