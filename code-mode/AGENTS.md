@@ -38,6 +38,11 @@ no restart. Read the repository's `AGENTS.md` first.
   tell whether that session already started (a thread begun while the plugin was off, steered after it
   came back: only `turn/completed` is easy to see) nor its model, so a fallback by the defaults could
   record an ordinary session as Code Mode (review pass 1, findings 2 and 3).
+- **A fork inherits only if it can't have run without the plugin** (`inheritsFromSource`, review pass 2):
+  made while this copy of the plugin was loaded (`loadedAt`; every launch then came through the
+  resolver, which recorded it), or still `pending`. A fork made while the plugin was off may have run
+  with the ordinary tools, and its event log can't tell (it is a copy of its source's), so it gets
+  nothing, now and later. A fork made just before a reload and launched after it is treated the same.
 - **The resolver must be fast and must not throw.** bb gives it five seconds and contributes nothing on an
   error or timeout, which breaks a Code Mode thread's resume. It answers from memory after the first
   read; a machine's wrapper path is kept in memory and kv and re-checked in the background
@@ -46,9 +51,11 @@ no restart. Read the repository's `AGENTS.md` first.
   and accepts a path saved by an earlier load, even after a failed check. `readiness`, which a new "on"
   record needs, requires a successful check on this load with no later failure; a failed check takes the
   confirmation back.
-- **"Send now" on a queued message skips every dispatch hook**, so a first message sent that way starts
-  the thread without Code Mode, whatever the defaults or the Send menu said (`experimental_data` is
-  delivered only on a send's first dispatch attempt anyway).
+- **"Send now" on a queued message skips every dispatch hook.** A thread whose choice was already
+  recorded keeps it: a first message queued behind another plugin's wait was decided on its first
+  dispatch pass, and Send now still routes it by that record. Only a first launch with no recorded choice
+  (a first message that never passed the hook, such as a scheduled one sent now) starts without Code Mode
+  and stays so (`experimental_data` is delivered only on a send's first dispatch attempt).
 - **Project switches are keyed by project name, not id** (`shared/config.ts`, the owner's choice): bb
   often has one project per machine, or two checkouts, under one name, and they share one switch, which
   a project added later with that name follows. The hook reads the name from its context

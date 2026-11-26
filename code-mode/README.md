@@ -51,8 +51,10 @@ the real `claude`.
   thread menu.
 
 Threads that existed before you installed the plugin are never touched. Neither is a thread whose first
-message went out without the plugin's check: one started while the plugin was off, or one sent with
-**Send now** on a queued message, which skips plugins' checks. Those start, and stay, without Code Mode.
+message went out with no choice recorded: one started, or forked, while the plugin was off, or one whose
+first message never passed the plugin's check before **Send now** sent it from the queue (Send now skips
+plugins' checks). Those start, and stay, without Code Mode. A choice already recorded is kept: a first
+message sent in Code Mode and held in the queue is still sent in Code Mode by Send now.
 
 | The Send menu | A Code Mode thread |
 | --- | --- |

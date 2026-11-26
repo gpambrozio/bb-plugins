@@ -37,6 +37,8 @@ export interface ThreadFacts {
 
 export interface PolicyDeps {
   pluginId: string;
+  /** When this copy of the plugin loaded (epoch ms, bb's clock): see `freshFork`. */
+  loadedAt: number;
   records: Records;
   config: ConfigStore;
   spawnedRule(): Promise<SpawnedRule>;
@@ -62,6 +64,17 @@ function forkSource(thread: Pick<ThreadFacts, "originKind" | "sourceThreadId">):
 
 export function createPolicy(deps: PolicyDeps) {
   const { records } = deps;
+
+  /**
+   * A fork without a record may take its source's choice only while its session can't have run
+   * without the plugin: it was made while this copy was loaded (its every launch has come here, and the
+   * first one recorded it), or it is still `pending` (it never ran). A fork made while the plugin was
+   * off may already have run with the ordinary tools: it gets nothing, now and later. Its event log
+   * can't tell, since a fork's history is a copy of its source's.
+   */
+  function inheritsFromSource(thread: Pick<ThreadFacts, "originKind" | "sourceThreadId" | "createdAt"> & { status?: string }): boolean {
+    return forkSource(thread) !== null && (thread.createdAt >= deps.loadedAt || thread.status === "pending");
+  }
 
   async function facts(args: {
     thread: Pick<ThreadFacts, "originKind" | "sourceThreadId" | "parentThreadId" | "originPluginId">;
@@ -99,9 +112,9 @@ export function createPolicy(deps: PolicyDeps) {
       const refusal = modelGuard(existing, model);
       return refusal ? { action: "reject", message: refusal } : PROCEED;
     }
-    const isFork = forkSource(ctx.thread) !== null;
-    // Only a thread's first message decides; any other thread without a record is the resolver's.
-    if (!isFork && (ctx.attempt !== "start-turn" || ctx.thread.status !== "pending")) return PROCEED;
+    // Only a thread's first message decides, or a fork that can't have run without the plugin; any other
+    // thread without a record is left alone.
+    if (forkSource(ctx.thread) !== null ? !inheritsFromSource(ctx.thread) : ctx.attempt !== "start-turn" || ctx.thread.status !== "pending") return PROCEED;
 
     const sender = typeof ctx.senderThreadId === "string" && ctx.senderThreadId !== "mixed" ? ctx.senderThreadId : null;
     const starter = ctx.parentThreadId ?? ctx.thread.parentThreadId ?? sender;
@@ -127,16 +140,17 @@ export function createPolicy(deps: PolicyDeps) {
   }
 
   /**
-   * The record for a thread bb starts without one. A fork takes its source's choice, since it resumes
-   * the source's session. Any other thread is left alone and gets nothing: its first message skipped the
-   * dispatch hook ("Send now" on a queued message), or it started while the plugin was off. The resolver
-   * can't tell whether its session has already started, nor on which model, so asserting Code Mode for
-   * it could record a session that never ran in Code Mode.
+   * The record for a thread bb starts without one. A fork made while this copy of the plugin is loaded
+   * takes its source's choice, since it resumes the source's session (see `inheritsFromSource`). Any
+   * other thread is left alone and gets nothing: its first launch had no recorded choice ("Send now" on
+   * a queued first message skips the dispatch hook), or it started while the plugin was off. The
+   * resolver can't tell whether its session has already started, nor on which model, so asserting Code
+   * Mode for it could record a session that never ran in Code Mode.
    */
   function decideAtStart(threadId: string) {
     return records.decideOnce(threadId, async () => {
       const thread = await deps.getThread(threadId);
-      const source = thread ? forkSource(thread) : null;
+      const source = thread && inheritsFromSource(thread) ? forkSource(thread) : null;
       if (!source) return { record: null };
       const sourceRecord = await records.get(source);
       const codeMode = sourceRecord?.codeMode === "on" ? "on" : "off";

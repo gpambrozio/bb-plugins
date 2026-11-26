@@ -327,6 +327,34 @@ describe("forks", () => {
     expect(t.metadata.get("thr_fork2")?.codeMode).toMatchObject({ codeMode: "on", reason: "forked from a Code Mode thread" });
   });
 
+  it("made while the plugin was off and already run stay ordinary after it comes back, through the resolver and the hook", async () => {
+    const t = await setup();
+    await t.turnOnHost();
+    t.thread("thr_src");
+    await t.send("thr_src", t.codeModeSend);
+    t.started("thr_src");
+    // Forked, and run with the ordinary tools, while the plugin was off: made before this load.
+    t.thread("thr_old_fork", { originKind: "fork", sourceThreadId: "thr_src", parentThreadId: "thr_src", status: "idle", createdAt: 1_000 });
+    expect(await t.resolve("thr_old_fork")).toEqual([]);
+    expect(await t.send("thr_old_fork", { requestedExecution: { model: "claude-opus-5" } })).toEqual({ action: "proceed" });
+    expect(t.metadata.has("thr_old_fork")).toBe(false);
+    t.thread("thr_old_fork2", { originKind: "fork", sourceThreadId: "thr_src", parentThreadId: "thr_src", status: "idle", createdAt: 1_000 });
+    expect(await t.send("thr_old_fork2")).toEqual({ action: "proceed" });
+    expect(await t.resolve("thr_old_fork2")).toEqual([]);
+    expect(t.metadata.has("thr_old_fork2")).toBe(false);
+  });
+
+  it("made while the plugin was off but never launched still take their source's choice", async () => {
+    const t = await setup();
+    await t.turnOnHost();
+    t.thread("thr_src");
+    await t.send("thr_src", t.codeModeSend);
+    t.thread("thr_pending_fork", { originKind: "fork", sourceThreadId: "thr_src", parentThreadId: "thr_src", status: "pending", createdAt: 1_000 });
+    expect(await t.send("thr_pending_fork")).toEqual({ action: "proceed" });
+    expect(t.metadata.get("thr_pending_fork")?.codeMode).toMatchObject({ codeMode: "on", reason: "forked from a Code Mode thread" });
+    expect(await t.resolve("thr_pending_fork")).toEqual(WRAPPER_ENTRY);
+  });
+
   it("of an ordinary thread stay ordinary, even in a project that is turned on", async () => {
     const t = await setup();
     await t.turnOnHost();

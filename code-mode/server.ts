@@ -16,6 +16,7 @@ import { createWrappers } from "./server/wrappers";
 
 
 export default async function plugin(bb: BbPluginApi) {
+  const loadedAt = Date.now();
   const settings = bb.settings.define({
     [SPAWNED_SETTING]: {
       type: "select",
@@ -68,6 +69,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const policy = createPolicy({
     pluginId: bb.pluginId,
+    loadedAt,
     records,
     config,
     spawnedRule: async () => (rule ??= spawnedRule((await settings.get())[SPAWNED_SETTING])),
