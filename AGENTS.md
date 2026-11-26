@@ -325,7 +325,10 @@ and "the daemon's own file"; decide per value whether the user edits it in the h
 
 **Hidden threads replace helper agents.** `bb.sdk.threads.spawn({ visibility: "hidden", … })`
 keeps a background worker out of the sidebar and out of bb's unread attention. The plugin must `stop`
-it in a `finally` and archive it when done. Hidden is not silent: bb delivers a hidden thread's events
+it in a `finally` and archive it when done. A hidden thread is still a whole thread: `ThreadChat` draws
+it and `/threads/<id>` opens it, with no sidebar row, and `threads.update({ visibility })` moves it either
+way (bb 0.50.1, `terminals/AGENTS.md`). But bb's push-notifications plugin notifies only visible threads,
+and the app leaves hidden ones out of @-mentions, thread lists and the phone's recents. Hidden is not silent: bb delivers a hidden thread's events
 to every plugin's `bb.events` handlers, the spawning plugin's included. Recognise your own by
 `thread.originPluginId === bb.pluginId`, which bb stamps on every thread spawned with `pluginMetadata`.
 Nothing else on a thread says whether a person asked for it: bb stamps `originPluginId` on a GitHub

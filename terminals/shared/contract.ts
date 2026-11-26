@@ -51,6 +51,11 @@ export const rpcContract = defineRpcContract({
   },
   /** Lets go of the tab's helper thread: it keeps its chat, and loses the tab's tools. */
   forgetAgent: { input: z.object({ terminalId: z.string().min(1) }), output: Empty },
+  /**
+   * Makes the tab's agent chat show in bb's sidebar from now on (it starts
+   * hidden), before the app opens it as a normal thread. Fails when the tab has none.
+   */
+  showAgentChat: { input: z.object({ terminalId: z.string().min(1) }), output: z.object({ threadId: z.string() }) },
   /** The owner's instructions text for a tab's agent; null means the built-in one. */
   agentInstructions: { input: Empty, output: z.object({ text: z.string().nullable() }) },
   /**

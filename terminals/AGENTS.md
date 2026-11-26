@@ -40,6 +40,7 @@ specific to `terminals`.
 | `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
 | `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
 | `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
+| `server/chat-visibility.ts` | Whether the agent chats show in bb's sidebar: all shown (the owner's setting), or the ones from before hidden once. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -218,6 +219,19 @@ never edited it. `configure` is synchronous, so the server caches the text and r
 each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings (a gear
 always shown at the end of the tab strip, and one in the agent panel) with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
 has no call for it.
+
+**Agent chats are hidden threads until the owner opens one.** The owner did not want them in the
+sidebar, so `startAgent` spawns with `visibility: "hidden"` (bb's own side chat does the same), unless
+the setting `alwaysShowAgentChats` (bb's settings form; off by default) is on. "Open in bb" calls
+`showAgentChat`, which `threads.update`s the chat to `visible` before the app opens it, so it stays in
+the sidebar; a failed update still opens it. Turning the setting on shows every hidden chat
+(`settings.onChange`); turning it off changes none. The chats from before this were hidden once, on the
+first load (`agentChatsHidden` in kv), found by `threads.list({ originPluginId, includeHidden })`,
+since bb stamps the plugin's id on every thread it spawns. The cost, from bb's source at 0.50: its
+push-notifications plugin notifies only visible threads (a finished turn, an interaction, an error),
+and the app leaves hidden threads out of @-mention suggestions, project thread lists and the phone's
+recents. Checked live in a dev bb (0.50.1): a hidden chat renders in the panel's `ThreadChat`, opens at
+`/threads/<id>` without a sidebar row, and the button gives it one.
 
 **The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`
 only to a thread whose metadata names a tab *and* that the link store says is that tab's thread (or the

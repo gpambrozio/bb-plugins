@@ -72,9 +72,17 @@ The colours and font follow bb's theme, as bb's own terminal does.
   pixels. On a phone the panel covers the terminal, as before.
 - **The bot button** at the right end of the tab strip opens and closes the panel at any time, with
   no failed command needed: a new chat starts empty, or on the same line when the last command failed.
-- **One chat per tab.** Once the tab has a chat, the panel shows it (bb's own chat, the same one the
-  sidebar lists), and asking about another failure sends it to that chat straight away. The chat's
-  **new chat** button lets go of it and starts over; **open in bb** shows it as a normal thread.
+- **One chat per tab.** Once the tab has a chat, the panel shows it (bb's own chat), and asking about
+  another failure sends it to that chat straight away. The chat's **new chat** button lets go of it
+  and starts over.
+- **Agent chats stay out of the sidebar.** A tab's chat is a hidden bb thread: it shows in the panel,
+  not in bb's thread list. **Open in bb** (the arrow-out button in the panel's header) shows it in the
+  sidebar from then on and opens it as a normal thread. The trade-off: bb sends no push notifications
+  for a hidden chat (a finished reply, a question, an error), and leaves it out of @-mentions and
+  thread lists, so you see what it does only in the panel. To have every agent chat in the sidebar,
+  with notifications, turn on **Always show agent chats in the sidebar** in the plugin's settings
+  (Settings → Plugins → Terminals); the hidden ones are shown then too. Chats started before this
+  version are hidden once, when it first loads.
 - **The agent can read the terminal and run commands in it.** That chat gets two tools for that tab
   only: one reads what the terminal shows now, the other types one command at your prompt, waits for
   it to finish and reads back its output and exit code. You see the command typed in your shell, a

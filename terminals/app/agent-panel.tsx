@@ -95,6 +95,18 @@ export function AgentPanel({
     setFocus((value) => value + 1);
   }, [tab.terminalId, threadId]);
 
+  /** "Open in bb": the chat starts hidden from the sidebar, so it is shown there for good first. */
+  const openAsThread = async (id: string) => {
+    setError(null);
+    try {
+      await rpc.call("showAgentChat", { terminalId: tab.terminalId });
+    } catch (cause) {
+      // bb opens a hidden thread all the same; it just stays out of the sidebar.
+      setError(`Could not show the chat in the sidebar: ${message(cause)}`);
+    }
+    navigate.toThread(id);
+  };
+
   const forget = async () => {
     setError(null);
     try {
@@ -114,7 +126,7 @@ export function AgentPanel({
         </span>
         {threadId === null ? null : (
           <>
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2" aria-label="Open the chat in bb" onClick={() => navigate.toThread(threadId)}>
+            <Button type="button" variant="ghost" size="sm" className="h-7 px-2" aria-label="Open the chat in bb" onClick={() => void openAsThread(threadId)}>
               <Icon name="ExternalLink" />
             </Button>
             <Button type="button" variant="ghost" size="sm" className="h-7 px-2" aria-label="New agent chat" onClick={() => void forget()}>

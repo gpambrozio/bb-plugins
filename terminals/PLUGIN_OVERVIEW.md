@@ -26,7 +26,8 @@ terminal app does.
   at your prompt where you see them, and no other chat can. Seeing failures needs a shell that marks
   its prompts (fish 4, nushell; the README has lines to add for zsh and bash). The agent runs on your
   own agent provider, like any bb thread. What the agent is told can be edited in the plugin's
-  settings, with a way back to the built-in text.
+  settings, with a way back to the built-in text. Agent chats stay out of bb's sidebar (and so get no
+  push notifications) until you open one as a normal thread, or turn on a setting to always show them.
 - Copy on select follows bb's own setting: a finished selection is copied with a "Selection copied"
   notice, and nothing is copied when the setting is off.
 - Colours and font follow bb's theme.

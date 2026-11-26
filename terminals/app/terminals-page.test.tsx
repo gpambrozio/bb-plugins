@@ -1163,6 +1163,8 @@ describe("asking an agent", () => {
     const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), agentThreadId }]);
     const asked: { terminalId: string; text: string }[] = [];
     const started: { terminalId: string; request: Record<string, unknown> }[] = [];
+    const shownChats: string[] = [];
+    let failShow = false;
     Object.assign(rpc, {
       startAgent: ({ terminalId, request }: { terminalId: string; request: Record<string, unknown> }) => {
         started.push({ terminalId, request });
@@ -1173,6 +1175,11 @@ describe("asking an agent", () => {
         asked.push({ terminalId, text });
         return { threadId: agentThreadId };
       },
+      showAgentChat: ({ terminalId }: { terminalId: string }) => {
+        shownChats.push(terminalId);
+        if (failShow) throw new Error("bb is busy");
+        return { threadId: "thr_agent" };
+      },
       forgetAgent: ({ terminalId }: { terminalId: string }) => {
         state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, agentThreadId: null } : entry));
         return {};
@@ -1182,7 +1189,7 @@ describe("asking an agent", () => {
     const view = render(rpc, { projects, sidebarThreads: sidebar });
     await screen.findByRole("button", { name: "Mac mini" });
     await waitFor(() => expect(document.querySelector("[data-terminal-view]")).not.toBeNull());
-    return { view, state, asked, started };
+    return { view, state, asked, started, shownChats, failShowing: () => void (failShow = true) };
   }
 
   afterEach(async () => {
@@ -1342,6 +1349,19 @@ describe("asking an agent", () => {
     expect(screen.queryByRole("separator", { name: "Resize the agent panel" })).toBeNull();
     expect(document.querySelector<HTMLElement>("[data-agent-pane]")!.style.width).toBe("");
     window.localStorage.removeItem("terminals.agentPanelWidth");
+  });
+
+  it("shows the chat in bb's sidebar before opening it as a normal thread, and opens it even when that fails", async () => {
+    const { view, shownChats, failShowing } = await shown("thr_agent");
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Terminals" })).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the chat in bb" }));
+    await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_agent" }));
+    expect(shownChats).toEqual(["term_1"]);
+
+    failShowing();
+    fireEvent.click(screen.getByRole("button", { name: "Open the chat in bb" }));
+    expect(await screen.findByText(/Could not show the chat in the sidebar: .*bb is busy/)).toBeTruthy();
+    expect(view.navigateCalls.filter((call) => call.method === "toThread")).toHaveLength(2);
   });
 
   it("says what the agent typed until the user types", async () => {

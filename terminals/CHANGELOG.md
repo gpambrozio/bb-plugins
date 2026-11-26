@@ -23,6 +23,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   message unless the last command failed. A tab keeps
   its chat, so the next failure goes to the same one; start a new chat from the panel whenever you
   like. No other chat can use that terminal.
+- **Agent chats stay out of the sidebar.** A terminal's agent chat lives in its panel and is hidden
+  from bb's thread list; **Open in bb** in the panel's header shows it there from then on. bb sends no
+  push notifications for a hidden chat, so a setting, **Always show agent chats in the sidebar**, puts
+  them all back in the sidebar with notifications.
 - **A resizable agent panel.** Drag the edge between the terminal and the panel (or use the arrow keys
   on it) to make the panel wider or narrower; the terminal refits, and this browser remembers the width.
 - **Your own instructions for the agent.** A gear at the end of the tabs, and another in the agent

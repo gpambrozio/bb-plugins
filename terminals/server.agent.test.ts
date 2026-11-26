@@ -12,14 +12,16 @@ import type { ListedTab, TabView } from "./shared/tabs";
 const osc = (body: string) => `\u001b]${body}\u0007`;
 const prompt = `${osc("133;A")}~ % ${osc("133;B")}`;
 
-async function start() {
+async function start(options: { settings?: Record<string, boolean>; existing?: { id: string; visibility: string }[] } = {}) {
   const output: { seq: number; dataBase64: string }[] = [];
   const print = (text: string) => output.push({ seq: output.length, dataBase64: Buffer.from(text).toString("base64") });
   const typed: string[] = [];
-  const threads = new Map<string, { archivedAt: number | null; deletedAt: number | null }>();
+  const threads = new Map<string, { archivedAt: number | null; deletedAt: number | null; visibility: string }>();
+  for (const thread of options.existing ?? []) threads.set(thread.id, { archivedAt: null, deletedAt: null, visibility: thread.visibility });
   let spawned = 0;
   const { bb, harness } = createFakePluginHost({
     pluginId: "terminals",
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
     agentSkillIds: ["terminals"],
     sdk: {
       system: { config: async () => ({ primaryHostId: "mini" }) as never },
@@ -46,10 +48,18 @@ async function start() {
         },
       },
       threads: {
-        spawn: async () => {
+        spawn: async (args) => {
           const id = `thr_${++spawned}`;
-          threads.set(id, { archivedAt: null, deletedAt: null });
+          threads.set(id, { archivedAt: null, deletedAt: null, visibility: (args as { visibility?: string }).visibility ?? "visible" });
           return { id } as never;
+        },
+        list: async ({ offset = 0, limit = 100 } = {}) =>
+          [...threads].filter(([, thread]) => thread.archivedAt === null).map(([id, thread]) => ({ id, visibility: thread.visibility })).slice(offset, offset + limit) as never,
+        update: async ({ threadId, visibility }) => {
+          const thread = threads.get(threadId);
+          if (thread === undefined) throw new Error("not found");
+          if (visibility !== undefined) thread.visibility = visibility;
+          return { id: threadId } as never;
         },
         get: async ({ threadId }) => {
           const thread = threads.get(threadId);
@@ -91,15 +101,52 @@ describe("a tab's agent", () => {
     const { harness, tab } = await start();
     const started = (await harness.callRpc("startAgent", {
       terminalId: tab.terminalId,
-      request: { ...request, parentThreadId: "thr_sneaky", visibility: "hidden" },
+      request: { ...request, parentThreadId: "thr_sneaky", visibility: "visible" },
     })) as { threadId: string };
     expect(started).toEqual({ threadId: "thr_1" });
     const [spawn] = harness.sdk.callsTo("threads.spawn") as [Record<string, unknown>][];
-    expect(spawn?.[0]).toMatchObject({ ...request, pluginMetadata: { terminalId: tab.terminalId } });
-    // Filing is the plugin's: a request cannot hide the thread or make it another's child.
+    expect(spawn?.[0]).toMatchObject({ ...request, pluginMetadata: { terminalId: tab.terminalId }, visibility: "hidden" });
+    // Filing is the plugin's: a request cannot choose where the thread shows or make it another's child.
     expect(spawn?.[0]).not.toHaveProperty("parentThreadId");
-    expect(spawn?.[0]).not.toHaveProperty("visibility");
     expect(await listed(harness)).toMatchObject([{ terminalId: tab.terminalId, agentThreadId: "thr_1" }]);
+  });
+
+  it("shows the tab's chat in the sidebar for good when the user opens it as a normal thread", async () => {
+    const { harness, tab, threads } = await start();
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    expect(threads.get("thr_1")?.visibility).toBe("hidden");
+    expect(await harness.callRpc("showAgentChat", { terminalId: tab.terminalId })).toEqual({ threadId: "thr_1" });
+    expect(harness.sdk.callsTo("threads.update")).toEqual([[{ threadId: "thr_1", visibility: "visible" }]]);
+    expect(threads.get("thr_1")?.visibility).toBe("visible");
+    await harness.callRpc("forgetAgent", { terminalId: tab.terminalId });
+    await expect(harness.callRpc("showAgentChat", { terminalId: tab.terminalId })).rejects.toThrow(/no agent chat/);
+  });
+
+  it("starts chats in the sidebar when the owner always shows them, and shows the hidden ones when they turn it on", async () => {
+    const shown = await start({ settings: { alwaysShowAgentChats: true } });
+    await shown.harness.callRpc("startAgent", { terminalId: shown.tab.terminalId, request });
+    expect(shown.threads.get("thr_1")?.visibility).toBe("visible");
+
+    const { harness, tab, threads } = await start();
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    expect(threads.get("thr_1")?.visibility).toBe("hidden");
+    await harness.setSettings({ alwaysShowAgentChats: true });
+    await expect.poll(() => threads.get("thr_1")?.visibility).toBe("visible");
+    // Turning it off again leaves the chats as they are; new ones start hidden.
+    await harness.setSettings({ alwaysShowAgentChats: false });
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    expect(threads.get("thr_1")?.visibility).toBe("visible");
+    expect(threads.get("thr_2")?.visibility).toBe("hidden");
+  });
+
+  it("hides the agent chats started before chats were hidden, once per install", async () => {
+    const { bb, harness, threads } = await start({ existing: [{ id: "thr_before", visibility: "visible" }] });
+    const service = harness.runService("prune-ended-tabs");
+    await expect.poll(() => threads.get("thr_before")?.visibility).toBe("hidden");
+    // Recorded, so a chat the owner opens as a normal thread later is not hidden again (server/chat-visibility.test.ts).
+    await expect.poll(() => bb.storage.kv.get("agentChatsHidden")).toBe(true);
+    service.controller.abort();
+    await service.done;
   });
 
   it("gives the tab's tools only to its own thread, and the skill to every thread", async () => {

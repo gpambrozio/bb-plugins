@@ -75,6 +75,8 @@ export interface AgentDeps {
   cachedInstructions(): string | null;
   /** Reads the owner's instructions text again, so a thread about to start gets the latest. */
   loadInstructions(): Promise<unknown>;
+  /** Whether a new chat shows in bb's sidebar: hidden unless the owner's setting says always show. */
+  newChatVisibility(): Promise<"visible" | "hidden">;
 }
 
 function tabFacts(tabs: readonly Tab[], terminalId: string): TabFacts | null {
@@ -195,7 +197,7 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   return {
     async startAgent(terminalId: string, request: Record<string, unknown>): Promise<{ threadId: string }> {
       await requireTab(terminalId);
-      const args = spawnArgs(request, terminalId);
+      const args = { ...spawnArgs(request, terminalId), visibility: await deps.newChatVisibility() };
       // Another copy of the plugin (a reload) may have saved them: the new thread's first session reads them.
       await deps.loadInstructions().catch(() => undefined);
       await links.begin(terminalId);
@@ -220,6 +222,14 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     },
 
     forgetAgent: (terminalId: string) => links.drop(terminalId),
+
+    /** Makes the tab's chat show in bb's sidebar from now on, for "open in bb"; returns its id. */
+    async showAgentChat(terminalId: string): Promise<{ threadId: string }> {
+      const threadId = links.threadFor(terminalId);
+      if (threadId === null) throw new Error("This terminal has no agent chat.");
+      await bb.sdk.threads.update({ threadId, visibility: "visible" });
+      return { threadId };
+    },
 
     /** Drops the links of closed tabs, and of threads that were archived or deleted. */
     async prune(): Promise<void> {

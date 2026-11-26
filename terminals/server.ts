@@ -12,6 +12,7 @@ import { rpcContract } from "./shared/contract";
 import { selectableHosts } from "./shared/host-choice";
 import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "./shared/tabs";
 import { registerAgent } from "./server/agent";
+import { setAllChats, settleChats, type ChatVisibilityPorts } from "./server/chat-visibility";
 import { AgentLinkSchema, createAgentLinks } from "./server/agent-links";
 import { createTerminalsService } from "./server/service";
 import type { AgentTerminalPorts } from "./server/terminal-agent";
@@ -22,6 +23,8 @@ export type { RpcContract } from "./shared/contract";
 const TABS_KEY = "tabs";
 const CLOSING_KEY = "closing";
 const AGENTS_KEY = "agents";
+/** Set once the agent chats started before chats were hidden have been hidden. */
+const HIDDEN_MIGRATION_KEY = "agentChatsHidden";
 /** The owner's instructions text for a tab's agent; absent means the built-in one. */
 const INSTRUCTIONS_KEY = "agentInstructions";
 /** How often a tab closed while its shell was opening is checked on, while there is one. */
@@ -145,6 +148,29 @@ export default async function plugin(bb: BbPluginApi) {
     sleep,
     now: () => Date.now(),
   };
+  const settings = bb.settings.define({
+    alwaysShowAgentChats: {
+      type: "boolean",
+      label: "Always show agent chats in the sidebar",
+      description:
+        "Off: a terminal's agent chat stays out of bb's sidebar until you open it as a normal thread from its panel. bb sends no push notifications for a chat while it is hidden, and leaves it out of @-mentions and thread lists. On: every agent chat shows in the sidebar, with notifications, and the hidden ones are shown now.",
+      default: false,
+    },
+  });
+  const visibilityPorts: ChatVisibilityPorts = {
+    list: (offset, limit) =>
+      bb.sdk.threads.list({ originPluginId: bb.pluginId, includeHidden: true, archived: false, offset, limit }),
+    update: async (threadId, visibility) => {
+      await bb.sdk.threads.update({ threadId, visibility });
+    },
+    warn: (text) => bb.log.warn(text),
+  };
+  settings.onChange((next, prev) => {
+    if (next.alwaysShowAgentChats && !prev.alwaysShowAgentChats) {
+      setAllChats(visibilityPorts, "visible").catch((error: unknown) => bb.log.warn(`could not show the agent chats: ${String(error)}`));
+    }
+  });
+
   let cachedInstructions: string | null = null;
   const loadInstructions = async () => {
     const stored = await bb.storage.kv.get<unknown>(INSTRUCTIONS_KEY);
@@ -156,6 +182,7 @@ export default async function plugin(bb: BbPluginApi) {
   const agent = registerAgent(bb, {
     cachedInstructions: () => cachedInstructions,
     loadInstructions,
+    newChatVisibility: async () => ((await settings.get()).alwaysShowAgentChats ? "visible" : "hidden"),
     links,
     tabs: loadTabs,
     cachedTabs: () => cachedTabs,
@@ -194,6 +221,7 @@ export default async function plugin(bb: BbPluginApi) {
       bb.realtime.publish(TABS_CHANGED, {});
       return {};
     },
+    showAgentChat: ({ terminalId }) => agent.showAgentChat(terminalId),
     agentInstructions: async () => ({ text: await loadInstructions() }),
     setAgentInstructions: async ({ text }) => {
       const next = normalizeInstructions(text);
@@ -225,6 +253,19 @@ export default async function plugin(bb: BbPluginApi) {
         await agent.prune();
       } catch (error) {
         bb.log.warn(`could not let go of finished agent chats: ${String(error)}`);
+      }
+      try {
+        await settleChats(
+          visibilityPorts,
+          {
+            alwaysShow: (await settings.get()).alwaysShowAgentChats,
+            migrated: async () => (await bb.storage.kv.get<unknown>(HIDDEN_MIGRATION_KEY)) === true,
+            markMigrated: () => bb.storage.kv.set(HIDDEN_MIGRATION_KEY, true),
+          },
+          signal,
+        );
+      } catch (error) {
+        bb.log.warn(`could not set which agent chats show in the sidebar: ${String(error)}`);
       }
       while (!signal.aborted) {
         let pending: boolean;
