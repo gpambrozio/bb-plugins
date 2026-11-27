@@ -11,7 +11,7 @@ import { SPAWNED_SETTING } from "./shared/settings";
 const PLUGIN_ID = "code-mode";
 const LAUNCHER = "/data/plugins/code-mode/host-data/bb-claude-code-mode";
 const HOST = "host_mini";
-const OTHER_HOST = "host_doxbook";
+const OTHER_HOST = "host_work_laptop";
 const PROJECT = "proj_a";
 const PROJECT_NAME = "Acme Web";
 
@@ -142,9 +142,9 @@ describe("Send in Code Mode", () => {
   it("refuses on a machine that is not turned on, naming it, and records nothing", async () => {
     const t = await setup();
     t.thread("thr_x");
-    const decision = await t.send("thr_x", { ...t.codeModeSend, host: { id: OTHER_HOST, name: "Gustavo DoxBook Pro" } });
+    const decision = await t.send("thr_x", { ...t.codeModeSend, host: { id: OTHER_HOST, name: "Work Laptop" } });
     expect(decision).toMatchObject({ action: "reject" });
-    expect(decision.action === "reject" && decision.message).toContain("Code Mode is off on Gustavo DoxBook Pro");
+    expect(decision.action === "reject" && decision.message).toContain("Code Mode is off on Work Laptop");
     expect(t.metadata.has("thr_x")).toBe(false);
     expect(await t.resolve("thr_x", OTHER_HOST)).toEqual([]);
   });
