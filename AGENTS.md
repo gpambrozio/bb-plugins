@@ -317,6 +317,18 @@ What a port only learns by running it:
   which push notifications and Herald announce.
 - **`fileChange` paths in the event log are absolute**, and on macOS Claude Code reports `/private/var/…`
   for a workspace bb knows as `/var/…` (`learning-exercises/server/signals.ts`, `relativize`).
+- **A plugin can set another provider's environment, per thread.**
+  `bb.providers.experimental_contributeEnv(providerId, resolve)` runs before every start, resume, fork
+  and turn of that provider's threads, with `{ threadId, projectId, hostId }` (`threadId` is null for
+  model listing), and what it returns joins the thread's session env. bb's Claude Code bridge reads
+  `BB_CLAUDE_CODE_EXECUTABLE` from there, so a plugin can swap the `claude` one thread runs (bb 0.50.1).
+  bb keeps the executable a thread attached with until the thread stops, and contributes nothing when the
+  resolver throws or takes over five seconds: answer from memory, and never change a thread's answer
+  (`code-mode/AGENTS.md`).
+- **A Send-menu row can tag one send for a dispatch hook.** `composer.submit({ experimental_data })` from
+  an `app.composer.customize` `sendMenu` row reaches `message.dispatch` as `experimental_submission`
+  (`{ pluginId, data }`), on that send's first dispatch attempt only: a queued re-attempt carries none,
+  and "Send now" on a queued message skips every hook (`code-mode/server/policy.ts`).
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
@@ -388,6 +400,12 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
   (`resolveHostEnvironment`) before sending each one to the daemon, so a call made after another can
   reach the host first. Number calls whose order matters and reorder them on the host, or wait for
   each answer before the next call.
+- **The server can't call a host while its plugin loads.** A `bb.hosts.experimental_client(...).call`
+  made from the factory, or from a promise the factory left running, fails with "host plugin calls are
+  unavailable during factory registration; call from a handler, service, or timer" (bb 0.50.1). Start
+  load-time host work from a `bb.background.service`, which runs once loading is done
+  (`code-mode/server/machine-checks.ts`). The SDK's fake host does not refuse such calls, so make the
+  fake's `experimental_callHostRpc` throw until the factory has finished (`code-mode/server.test.ts`).
 - **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
   afterwards. Take the lease in the handler that starts the background work, and release it on every
   way that work ends.

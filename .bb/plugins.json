@@ -17,6 +17,7 @@
     { "name": "phone-rail", "source": "./phone-rail" },
     { "name": "dream", "source": "./dream" },
     { "name": "project-actions", "source": "./project-actions" },
-    { "name": "duo-rail", "source": "./duo-rail" }
+    { "name": "duo-rail", "source": "./duo-rail" },
+    { "name": "code-mode", "source": "./code-mode" }
   ]
 }
