@@ -19,7 +19,7 @@ the real `claude`.
   the composer's pickers, and is greyed out for agents other than Claude Code, for models that can't run
   Code Mode, and on a machine where Code Mode is off or its wrapper isn't ready. If it is used there
   anyway (a machine the picker doesn't name, say), the send is refused with the reason, for example
-  "Code Mode is off on Gustavo DoxBook Pro", and nothing is recorded.
+  "Code Mode is off on Work Laptop", and nothing is recorded.
 - **Send without Code Mode.** When a new thread would start in Code Mode by default (its project and its
   machine are on, see *Defaults*), the same menu offers **Send without Code Mode**, which starts it with
   the ordinary tools instead. It is greyed out otherwise. bb can grey a Send-menu row out but not hide

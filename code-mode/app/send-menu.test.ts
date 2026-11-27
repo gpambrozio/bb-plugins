@@ -7,13 +7,13 @@ import { selectedHostId, sendInBlocked, sendInCodeMode, sendWithoutCodeMode, SEN
 vi.mock("@get-bb/plugin-sdk/app", () => ({}));
 
 const MINI = "host_mini";
-const DOXBOOK = "host_doxbook";
+const WORK_LAPTOP = "host_work_laptop";
 
 function facts(overrides: Partial<ComposerFactsState> = {}): ComposerFactsState {
   return {
     config: { projectNames: { "Acme Web": true }, hosts: { [MINI]: true } },
     statuses: { [MINI]: { ok: true, message: "Wrapper ready" } },
-    hostNames: { [MINI]: "MacMini", [DOXBOOK]: "Gustavo DoxBook Pro" },
+    hostNames: { [MINI]: "MacMini", [WORK_LAPTOP]: "Work Laptop" },
     projectNames: { proj_acme: "Acme Web", proj_ios: "iOS-Doximity" },
     ...overrides,
   };
@@ -29,7 +29,7 @@ afterEach(resetComposerFacts);
 describe("the machine the composer picked", () => {
   it("comes from a host or a machine-provider environment", () => {
     expect(selectedHostId(onMachine(MINI))).toBe(MINI);
-    expect(selectedHostId({ environment: { type: "provider", environmentProviderId: "x", machine: { type: "existing", hostId: DOXBOOK }, inputs: null } } as never)).toBe(DOXBOOK);
+    expect(selectedHostId({ environment: { type: "provider", environmentProviderId: "x", machine: { type: "existing", hostId: WORK_LAPTOP }, inputs: null } } as never)).toBe(WORK_LAPTOP);
     expect(selectedHostId({ environment: { type: "project-default" } } as never)).toBeNull();
     expect(selectedHostId(null)).toBeNull();
   });
@@ -37,12 +37,12 @@ describe("the machine the composer picked", () => {
 
 describe("Send in Code Mode", () => {
   it("is greyed out on a machine where Code Mode is off, naming it", () => {
-    expect(sendInBlocked(onMachine(DOXBOOK), facts())).toBe("Code Mode is off on Gustavo DoxBook Pro");
+    expect(sendInBlocked(onMachine(WORK_LAPTOP), facts())).toBe("Code Mode is off on Work Laptop");
   });
 
   it("is greyed out where the wrapper isn't ready", () => {
-    const state = facts({ config: { projectNames: {}, hosts: { [DOXBOOK]: true } }, statuses: { [DOXBOOK]: { ok: false, message: "This machine's bb has no Node." } } });
-    expect(sendInBlocked(onMachine(DOXBOOK), state)).toBe("Code Mode's wrapper isn't ready on Gustavo DoxBook Pro: This machine's bb has no Node");
+    const state = facts({ config: { projectNames: {}, hosts: { [WORK_LAPTOP]: true } }, statuses: { [WORK_LAPTOP]: { ok: false, message: "This machine's bb has no Node." } } });
+    expect(sendInBlocked(onMachine(WORK_LAPTOP), state)).toBe("Code Mode's wrapper isn't ready on Work Laptop: This machine's bb has no Node");
   });
 
   it("is greyed out for another agent and a model without Code Mode", () => {
@@ -57,14 +57,14 @@ describe("Send in Code Mode", () => {
 
   it("leaves a machine it can't name, or switches not loaded yet, to the dispatch hook", () => {
     expect(sendInBlocked({ providerId: "claude-code", environment: { type: "project-default" } } as never, facts())).toBeNull();
-    expect(sendInBlocked(onMachine(DOXBOOK), facts({ config: null }))).toBeNull();
+    expect(sendInBlocked(onMachine(WORK_LAPTOP), facts({ config: null }))).toBeNull();
   });
 
   it("follows the machine picker as it changes", () => {
     setComposerFacts(facts());
     const composer = { selection: onMachine(MINI), scope: NEW_THREAD } as never as { selection: unknown };
     expect((sendInCodeMode.disabled as (c: unknown) => boolean)(composer)).toBe(false);
-    composer.selection = onMachine(DOXBOOK);
+    composer.selection = onMachine(WORK_LAPTOP);
     expect((sendInCodeMode.disabled as (c: unknown) => boolean)(composer)).toBe(true);
   });
 });
@@ -73,7 +73,7 @@ describe("Send without Code Mode", () => {
   it("is offered only when the project and the machine are on", () => {
     expect(startsInCodeModeByDefault(onMachine(MINI, { projectId: "proj_acme" }), NEW_THREAD, facts())).toBe(true);
     expect(startsInCodeModeByDefault(onMachine(MINI, { projectId: "proj_ios" }), NEW_THREAD, facts())).toBe(false);
-    expect(startsInCodeModeByDefault(onMachine(DOXBOOK, { projectId: "proj_acme" }), NEW_THREAD, facts())).toBe(false);
+    expect(startsInCodeModeByDefault(onMachine(WORK_LAPTOP, { projectId: "proj_acme" }), NEW_THREAD, facts())).toBe(false);
     expect(startsInCodeModeByDefault(onMachine(MINI, { projectId: "proj_acme", model: "claude-opus-5" }), NEW_THREAD, facts())).toBe(false);
   });
 
