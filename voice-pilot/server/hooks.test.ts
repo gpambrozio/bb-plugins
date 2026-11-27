@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import type { HookEvent, HookFileStatus, HookRun } from "../shared/hooks";
 import { DebugLog } from "./debug-log";
-import { HOOK_CALL_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, SPEAKING_SETTLE_MS, hookTarget, machineHookStatuses, type HookTarget } from "./hooks";
+import {
+  HOOK_CALL_TIMEOUT_MS,
+  HOOK_EDIT_TIMEOUT_MS,
+  HOOK_STATUS_TIMEOUT_MS,
+  HookRunner,
+  SPEAKING_SETTLE_MS,
+  hookTarget,
+  machineHookStatuses,
+  readMachineHook,
+  writeMachineHook,
+  type HookTarget,
+} from "./hooks";
 import { VoiceSessions } from "./session";
 import { FakeBb, FakeClock, FakeRealtime, quietLog, settle } from "./testing/fakes";
 
@@ -354,5 +365,43 @@ describe("the hooks in a voice session", () => {
     realtime.last.emit({ type: "input_audio_buffer.speech_started" });
     await sessions.dispose();
     expect(host.runs).toEqual([]);
+  });
+});
+
+describe("the settings' hook editor, through the server", () => {
+  const hosts = [{ id: "host_studio", name: "Studio" }];
+  const port = (overrides: Partial<{ read: () => Promise<unknown>; write: () => Promise<unknown> }>) =>
+    ({
+      status: async () => ({ present: true, executable: true }),
+      run: async () => null,
+      read: overrides.read ?? (async () => ({ kind: "missing" })),
+      write: overrides.write ?? (async () => ({ outcome: "written", sha256: "b".repeat(64), executable: true })),
+    }) as never;
+  const save = { name: "hook.sh" as const, content: "x", expectedSha256: "a".repeat(64) };
+
+  it("loads and saves through the machine's host entry", async () => {
+    const clock = new FakeClock();
+    await expect(readMachineHook("host_studio", hosts, port({}), clock)).resolves.toEqual({ kind: "missing" });
+    await expect(writeMachineHook("host_studio", save, hosts, port({}), clock)).resolves.toMatchObject({ outcome: "written" });
+  });
+
+  it("says, naming the machine, when it is offline", async () => {
+    const clock = new FakeClock();
+    const offline = port({ read: async () => Promise.reject(new Error("host host_studio is not connected")), write: async () => Promise.reject(new Error("host host_studio is not connected")) });
+    await expect(readMachineHook("host_studio", hosts, offline, clock)).rejects.toThrow(/^Could not reach Studio: it may be offline, or bb's host daemon there is not running\. \(host host_studio is not connected\)$/u);
+    await expect(writeMachineHook("host_studio", save, hosts, offline, clock)).rejects.toThrow(/^Could not reach Studio: it may be offline/u);
+  });
+
+  it("gives up on a machine that does not answer", async () => {
+    const clock = new FakeClock();
+    const silent = port({ write: () => new Promise(() => undefined) });
+    const saving = writeMachineHook("host_studio", save, hosts, silent, clock);
+    const caught = saving.catch((error: unknown) => error);
+    await clock.advance(HOOK_EDIT_TIMEOUT_MS);
+    expect(String(await caught)).toMatch(/Could not reach Studio/u);
+  });
+
+  it("refuses a machine that is not one of bb's", async () => {
+    await expect(readMachineHook("host_gone", hosts, port({}), new FakeClock())).rejects.toThrow("That machine is not one of bb's machines (any more).");
   });
 });

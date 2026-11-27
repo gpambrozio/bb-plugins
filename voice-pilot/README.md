@@ -146,6 +146,10 @@ the volume while the voice speaks. Each machine runs its own, from one fixed fil
 ~/.config/voice-pilot/hook
 ```
 
+or, named with an extension, `hook.sh`, `hook.bash`, `hook.zsh`, `hook.fish`, `hook.py`, `hook.js`, `hook.mjs`,
+`hook.rb` or `hook.pl` in the same folder. Only one runs: the first one found in that order, `hook` first,
+so a machine set up with `hook` keeps running it. The settings say which one runs, and name any others there.
+
 The file must be executable, and its first line names what runs it. To pause Apple Music and mute Herald for
 the length of a session on a Mac:
 
@@ -182,15 +186,18 @@ Delete the file, or make it not executable, and no hook runs there. There is non
   the greeting's `speaking-started` late: keep it quick, or do there what the greeting must not miss (such
   as pausing music). A new session's hooks wait for the last one's to finish. Whether the file
   is there is checked when a session starts; a file made during a session runs from the next one.
-- **Only you set it.** No setting, RPC or command of Voice Pilot sets a hook, reads the file or shows what is
-  in it: bb's command line can do anything bb's app can, so a hook kept in bb could be changed by any agent
-  with access to `bb`. The settings page says, for each of bb's machines, whether it has a hook file and
-  whether it can run, and marks the machine you are on.
-- **Open the script** shows a machine's hook file in bb's own file panel, beside the Voice page (bb's
-  settings page has no file panel, so the button takes you there). bb reads it through its own access to
-  that machine; Voice Pilot passes only where the file is. In bb 0.50 that panel is bb's read-only preview,
-  not bb's File Editor: bb picks a file editor by the file's extension, and the hook file has none. Edit it
-  from the preview's **Open in editor**, where your bb has one, or on the machine.
+- **It is a file you write, not a setting.** No setting holds a hook, and nothing in Voice Pilot can name a
+  path: the settings page says, for each of bb's machines, whether it has a hook file and whether it can run,
+  and marks the machine you are on.
+- **Open the script** edits a machine's hook file in Voice Pilot's own editor, in bb's file panel beside the
+  Voice page (bb's settings page has no file panel, so the button takes you there). It loads the file from
+  that machine and saves it back there, keeping its permissions: an executable hook stays executable. It
+  saves only when the file has not changed on disk since it was loaded; otherwise it says so, and you
+  **Reload** (losing your edits) or **Save anyway**. A machine that is offline, or a save that fails there,
+  says so and keeps your edit. bb's own File Editor is not used: in bb 0.50 it cannot load a file on a
+  machine from a plugin's page. The editor reads and writes only the hook files above, by name; bb's own
+  command line (`bb file write --host`) can already write any file on your machines, so it gives an agent
+  with access to `bb` nothing it did not have.
 - **Where it runs:** on the machine whose **bb desktop app** is in the call, not on the machine running bb's
   server. The window finds its machine through the bb host daemon beside the desktop app, so the machine
   must be one of bb's machines. bb's **mobile app** and a **browser tab** run no hooks. macOS and Linux only.
@@ -224,8 +231,8 @@ your own bb can read it (no other plugin), and anything shaped like a credential
 - Questions from bb's own *Ask User Question* plugin and from a provider (Claude Code's own) can be
   answered; another plugin's form can only be named, and you answer it in bb.
 - One session at a time across your windows: a new Talk takes over.
-- **Open the script** opens the hook file read-only in bb 0.50 (above): bb's File Editor takes files by
-  their extension, and a plugin cannot hand it a file without one.
+- The hook editor is a plain text box: no syntax colours, no undo history beyond the browser's own, and it
+  edits only a hook file that is already there (make the first one on the machine).
 - In a browser tab, the browser may block a link the voice opens, as it blocks pop-ups that no tap started;
   the card then still says it opened it. A headless check opened them; bb's desktop app and mobile app have
   not been checked yet.

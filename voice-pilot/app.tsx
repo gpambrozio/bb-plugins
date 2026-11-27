@@ -15,6 +15,8 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { voice, type VoiceState } from "./app/controller";
 import { DebugOpener, DebugTab } from "./app/debug";
 import { DEBUG_TAB, openDebugLog } from "./app/debug-view";
+import { HookEditor } from "./app/hook-editor";
+import { HOOK_EDITOR_ID } from "./app/hook-file";
 import { VoiceHooksSection } from "./app/hooks-section";
 import { VOICE_PAGE, VoicePill, useVoiceState } from "./app/overlay";
 import { VoicePage } from "./app/page";
@@ -46,6 +48,12 @@ export default definePluginApp((app) => {
     description: "A file on each machine, run as listening starts and stops, as the voice speaks and as you talk.",
     component: VoiceHooksSection,
   });
+
+  // The hook editor: a file opener no extension selects, named by the settings' Open the script. Older bb has
+  // no file openers, and the settings then open the script in bb's own (read-only) preview.
+  if ("fileOpener" in app.slots) {
+    app.slots.fileOpener({ id: HOOK_EDITOR_ID, title: "Voice hook editor", extensions: [], component: HookEditor });
+  }
 
   app.commands.register({ id: "talk", title: "Voice Pilot: talk or end", run: () => voice.toggle() });
 

@@ -1,8 +1,8 @@
 /**
  * The app-facing RPC handlers. A session spends the owner's OpenAI key or ChatGPT plan and acts in bb for
  * them, so another plugin is refused before anything runs, the credential lookup and the takeover of a live
- * session included; so are the debug log and the voice hooks' status. No RPC sets, reads or names a hook
- * command: each machine runs only its own hook file, which the owner writes there.
+ * session included; so are the debug log and the voice hooks' status and editor. The editor loads and saves a
+ * machine's hook file by its name, never a path; bb's own `bb file write --host` reaches the same file.
  *
  * This is not an app-only gate. bb names both its app and its command line (`bb plugin rpc call`) a
  * `client`, with nothing else to tell them apart, so anything that can run `bb` on the owner's bb (an agent
@@ -11,6 +11,7 @@
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
 import type { rpcContract } from "../server";
+import type { HookFileRead, HookWrite, HookWriteResult } from "../shared/hooks";
 import { hookTarget, type MachineHookStatus } from "./hooks";
 import type { PromptEdits } from "./prompt-edits";
 import type { VoiceSessions } from "./session";
@@ -28,6 +29,9 @@ export function requireApp(caller: Caller): void {
 export interface HooksRpcPort {
   hosts(): Promise<Array<{ id: string; name: string }>>;
   statuses(hosts: Array<{ id: string; name: string }>): Promise<MachineHookStatus[]>;
+  /** The settings' hook editor (`readMachineHook`, `writeMachineHook`). */
+  read(hostId: string): Promise<HookFileRead>;
+  write(hostId: string, input: HookWrite): Promise<HookWriteResult>;
 }
 
 type PromptMethods = "prompt.staged" | "prompt.apply" | "prompt.reject";
@@ -109,6 +113,14 @@ export function sessionHandlers(
     "hooks.status": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);
       return { machines: await hooks.statuses(await hooks.hosts()) };
+    },
+    "hooks.read": async ({ hostId }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return hooks.read(hostId);
+    },
+    "hooks.write": async ({ hostId, ...input }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return hooks.write(hostId, input);
     },
   };
 }

@@ -56,7 +56,7 @@ describe("the settings' Open the script", () => {
     const buttons = await screen.findAllByRole("button", { name: "Open the script" });
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0]!);
-    expect(view.navigateCalls).toEqual([{ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_mac", path: PATH }, location: null } }]);
+    expect(view.navigateCalls).toEqual([{ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_mac", path: PATH }, location: null, opener: "hook-editor" } }]);
     expect(hookOpen.wanted).toBeNull();
   });
 
@@ -68,7 +68,7 @@ describe("the settings' Open the script", () => {
     expect(hookOpen.wanted).toMatchObject({ target: { hostId: "host_mac", path: PATH }, machine: "Studio Mac" });
 
     const page = renderSlot({ component: HookFileOpener }, {}, { openFilePreview: () => true });
-    await waitFor(() => expect(page.navigateCalls).toEqual([{ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_mac", path: PATH }, location: null } }]));
+    await waitFor(() => expect(page.navigateCalls).toEqual([{ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_mac", path: PATH }, location: null, opener: "hook-editor" } }]));
     expect(hookOpen.wanted).toBeNull();
     expect(toast.info).not.toHaveBeenCalled();
   });

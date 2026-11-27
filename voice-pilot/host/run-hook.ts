@@ -3,7 +3,8 @@
  * `hook.sh` and the others), never a command from anywhere else. Adapted from Herald's `host/run-hook.ts`: from the home folder, in a process group of its
  * own, and resolved on `exit`. Unlike Herald's, the whole group is killed as soon as the hook exits too, not
  * only at the time limit: a background process it started (`… &`) would otherwise outlive the limit, the
- * session and the worker. Its output is never read, and nothing here reads the file's contents.
+ * session and the worker. Its output is never read, and nothing here reads the file's contents (the editor's
+ * `host/hook-file.ts` does, for the settings).
  */
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";

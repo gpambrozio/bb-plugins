@@ -29,6 +29,8 @@
   tells you to tap Unmute to talk again, and the card says so too.
 - Runs on an OpenAI API key or on your ChatGPT subscription through the codex-realtime plugin.
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
-  talk. The settings list which machines have one, with a button that opens the script in bb's file panel.
+  talk. Name it `hook`, or `hook.sh`, `hook.py` and the like. The settings list which machines have one, and
+  Open the script edits it in place on its machine, keeping it executable, with a warning when it changed on
+  disk since you opened it.
 - The Voice page shows the session's state and its log: what you said, what the voice said, what it did.
   The log's Settings button opens Voice Pilot's settings.

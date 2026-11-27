@@ -28,8 +28,8 @@ phone; switch away from bb on the phone and the session pauses, then picks up wh
 ## Voice hooks
 
 A script you write on each machine, run as listening starts and stops, as the voice speaks and as you talk:
-pause your music, mute Herald, dim a light. Nothing in bb sets it; the settings say which machines have one
-and open it in bb's file panel.
+pause your music, mute Herald, dim a light. No setting holds it; the settings say which machines have one,
+and edit it on its machine in Voice Pilot's own editor.
 
 ## What it needs
 

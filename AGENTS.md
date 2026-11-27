@@ -526,7 +526,12 @@ answers false on bb's settings page (bb 0.50.1), so a settings section hands the
 page and opens it there (`voice-pilot/app/hook-file.ts`). A `host` target (`{ kind: "host", hostId, path }`)
 opens any file on an enrolled machine through bb's own file access. bb picks a plugin file opener, its
 bundled File Editor (`monaco-editor`) included, by the file's extension, and `opener` names only the calling
-plugin's own registrations, so a file without an extension always opens in bb's read-only preview.
+plugin's own registrations, so a file without an extension always opens in bb's read-only preview. And bb's
+File Editor cannot load a `host` file a plugin opens: it resolves one only through an environment, which a
+`host` target lacks ("This file has no environment to resolve it against"). To edit a file on a machine,
+register a `fileOpener` with `extensions: []`, open it by name (`opener`), and load and save through the
+plugin's host entry (`voice-pilot/app/hook-editor.tsx`); the opener gets the machine as
+`source.experimental_hostId`. bb's File Editor is built in but off in a fresh bb (`bb plugin enable monaco-editor`).
 
 **A sidebar badge has no icon.** `experimental_useBadge` takes `count`, `text` (8 characters), `tone` and
 `label`; a glyph such as `✎` in `text` is the nearest thing, and bb's icon-only rail draws any badge as a dot

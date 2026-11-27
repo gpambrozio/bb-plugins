@@ -1,9 +1,8 @@
 /**
  * The voice hooks in the plugin's settings: every machine bb knows, whether it has a hook file, and which
- * machine this window runs on, with Open the script for a machine that has one (bb's own file panel, beside the
- * Voice page: `app/hook-file.ts`). Nothing here sets or shows a command: each machine runs its own
- * hook file in `~/.config/voice-pilot/` (`hook`, or `hook.sh` and the like), which the owner writes there
- * (see the README).
+ * machine this window runs on, with Open the script for a machine that has one (Voice Pilot's editor, in bb's
+ * file panel beside the Voice page: `app/hook-file.ts`, `app/hook-editor.tsx`). No setting holds a command:
+ * each machine runs its own hook file in `~/.config/voice-pilot/` (`hook`, or `hook.sh` and the like).
  */
 import { useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
@@ -13,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import { HOOK_DIR_SHOWN, HOOK_EVENT_ENV, HOOK_FILE_SHOWN, HOOK_NAMES, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, hookShown, type HookFileStatus } from "../shared/hooks";
 import { createLocalHostLookup } from "./machine";
-import { hookOpen, type HookFileTarget } from "./hook-file";
+import { hookOpen, openHookEditor, type HookFileTarget } from "./hook-file";
 import { settingsPage } from "./open-settings";
 import { VOICE_PAGE } from "./overlay";
 import { voicePlatform } from "./platform";
@@ -74,7 +73,7 @@ export function VoiceHooksSection() {
   const navigate = useBbNavigate();
   // bb's settings page has no file panel: the Voice page, a plugin page with one, opens it instead.
   const openScript = (target: HookFileTarget, machine: string) => {
-    if (navigate.experimental_openFilePreview({ target, location: null })) return;
+    if (openHookEditor((options) => navigate.experimental_openFilePreview(options), target, machine)) return;
     hookOpen.ask(target, machine);
     navigate.toPluginPanel(VOICE_PAGE);
   };
@@ -99,9 +98,9 @@ export function VoiceHooksSection() {
       <div className="space-y-1">
         <p className="text-xs text-muted-foreground">
           Each machine runs its own hook: the executable file <code>{HOOK_FILE_SHOWN}</code> in its home folder, which you write there,
-          or one named with an extension bb&apos;s File Editor opens ({HOOK_NAMES.slice(1).join(", ")}) in <code>{HOOK_DIR_SHOWN}</code>: Open the
-          script then edits it in bb. Only the first one found runs, in that order, <code>hook</code> first.
-          Nothing in bb sets it or shows what is in it. It runs on the machine whose bb desktop app is in the call, from the home folder,
+          or one with an extension ({HOOK_NAMES.slice(1).join(", ")}) in <code>{HOOK_DIR_SHOWN}</code>. Only the first one found runs, in that order,
+          <code>hook</code> first. Open the script edits it in Voice Pilot&apos;s editor, on its machine, keeping its permissions.
+          No setting holds it. It runs on the machine whose bb desktop app is in the call, from the home folder,
           with {HOOK_EVENT_ENV} set to <code>listening-started</code>, <code>listening-stopped</code>, <code>speaking-started</code>,{" "}
           <code>speaking-stopped</code>, <code>talking-started</code> or <code>talking-stopped</code>, and {HOOK_REASON_ENV} set to why
           listening stopped. Speaking is the voice; talking is you. Output is ignored. A run gets {HOOK_TIMEOUT_MS / 1000} seconds and is
@@ -138,10 +137,9 @@ export function VoiceHooksSection() {
 }
 
 /**
- * Opens a machine's hook script in bb's own file panel, through bb's file access on that machine: the plugin
- * reads and stores nothing of it. bb 0.50.1 picks a plugin's file opener (its File Editor among them) by the
- * file's extension, and the hook file has none, so it opens in bb's file preview, whose Open in editor takes it
- * to the editor bb is set to use.
+ * Opens a machine's hook script in Voice Pilot's own editor (`app/hook-editor.tsx`), in bb's file panel. bb's
+ * File Editor cannot load a file on a machine from a plugin page (bb 0.50.1), so the editor loads and saves it
+ * through Voice Pilot's host entry on that machine.
  */
 function HookFileOpen({ machine, open }: { machine: MachineStatus; open: (target: HookFileTarget) => void }) {
   const target = hookFileTarget(machine);

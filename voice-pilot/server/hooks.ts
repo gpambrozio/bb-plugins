@@ -2,10 +2,11 @@
  * The voice hooks on the server's side: when a session runs the hook file of the machine whose desktop app
  * holds the call (`host.ts`), and whether each machine has one, for the settings page.
  *
- * - **No command passes through here.** Each machine runs only its own hook file in `~/.config/voice-pilot/`; no
- *   RPC, setting or call to a machine names a command or a path, and nothing reads the file's contents. bb
- *   names its app and its command line the same caller, so anything stored in bb could be changed by an
- *   agent with `bb`; a file on the machine can only be changed by someone who can already run things there.
+ * - **No path passes through here.** Each machine runs only its own hook file in `~/.config/voice-pilot/`; no
+ *   RPC, setting or call to a machine names a path, and no setting holds a command. The settings' editor loads
+ *   and saves that file by its fixed name (`readMachineHook`, `writeMachineHook`); bb names its app and its
+ *   command line the same caller, so an agent with `bb` can reach it, as it can any file through `bb file write
+ *   --host`.
  * - **The server owns the moments.** It hears every one on the call's sideband (your speech, the
  *   voice's replies and their audio) and knows when the session starts and ends whatever ended it, a window
  *   that went away included. The app names only its machine.
@@ -28,7 +29,20 @@
  *   `BB_SERVER_URL` the hook got (bb's relay on a Connect machine, `host/relay.ts`) or why it got none. Never
  *   the output, which is not even read.
  */
-import { hookFailed, hookOutcome, hookShown, relayLine, HOOK_DIR_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import {
+  hookFailed,
+  hookOutcome,
+  hookShown,
+  relayLine,
+  HOOK_DIR_SHOWN,
+  HOOK_TIMEOUT_MS,
+  type HookEvent,
+  type HookFileRead,
+  type HookFileStatus,
+  type HookRun,
+  type HookWrite,
+  type HookWriteResult,
+} from "../shared/hooks";
 import type { DebugLog } from "./debug-log";
 import { errorText, type Clock, type Log, type RealtimeEvent } from "./ports";
 
@@ -40,11 +54,57 @@ export const SPEAKING_SETTLE_MS = 1_000;
 /** How long a machine may take to say whether it has a hook file. */
 export const HOOK_STATUS_TIMEOUT_MS = 5_000;
 
-/** The host entry on one machine; see `shared/host-contract.ts`. Neither call names a command or a path. */
+/** The host entry on one machine; see `shared/host-contract.ts`. No call names a path. */
 export interface HostHookPort {
   status(hostId: string): Promise<HookFileStatus>;
   /** Null when the machine has no hook file (any more). */
   run(hostId: string, input: { event: HookEvent; reason: string | null }): Promise<HookRun | null>;
+  /** The settings' hook editor: load and save that machine's hook file. */
+  read?(hostId: string): Promise<HookFileRead>;
+  write?(hostId: string, input: HookWrite): Promise<HookWriteResult>;
+}
+
+/** How long the editor waits for a machine to load or save its hook file. */
+export const HOOK_EDIT_TIMEOUT_MS = 10_000;
+
+/** A machine for the editor: one of bb's, by its id, with its name for the messages. */
+function machineOf(hostId: string, hosts: ReadonlyArray<{ id: string; name: string }>): { id: string; name: string } {
+  const machine = hosts.find((host) => host.id === hostId);
+  if (machine === undefined) throw new Error("That machine is not one of bb's machines (any more).");
+  return machine;
+}
+
+/** The editor's message for a machine that did not answer. */
+export function unreachable(name: string, error: unknown): Error {
+  return new Error(`Could not reach ${name}: it may be offline, or bb's host daemon there is not running. (${errorText(error)})`);
+}
+
+/** Loads a machine's hook file for the editor. Rejects with a message naming the machine when it does not answer. */
+export async function readMachineHook(hostId: string, hosts: ReadonlyArray<{ id: string; name: string }>, host: HostHookPort, clock: Clock): Promise<HookFileRead> {
+  const machine = machineOf(hostId, hosts);
+  if (host.read === undefined) throw new Error("The hook editor is not available here.");
+  try {
+    return await withTimeout(host.read(hostId), HOOK_EDIT_TIMEOUT_MS, clock);
+  } catch (error) {
+    throw unreachable(machine.name, error);
+  }
+}
+
+/** Saves a machine's hook file from the editor: written, a conflict, or a failure the machine reported. */
+export async function writeMachineHook(
+  hostId: string,
+  input: HookWrite,
+  hosts: ReadonlyArray<{ id: string; name: string }>,
+  host: HostHookPort,
+  clock: Clock,
+): Promise<HookWriteResult> {
+  const machine = machineOf(hostId, hosts);
+  if (host.write === undefined) throw new Error("The hook editor is not available here.");
+  try {
+    return await withTimeout(host.write(hostId, input), HOOK_EDIT_TIMEOUT_MS, clock);
+  } catch (error) {
+    throw unreachable(machine.name, error);
+  }
 }
 
 /** One machine's hook file as the settings page shows it: there, runnable, or not known (unreachable). */

@@ -4,10 +4,9 @@
  * moment is in `VOICE_PILOT_HOOK`, and why listening stopped in `VOICE_PILOT_REASON`, so one script
  * handles them all. No file runs nothing, and there is none until the owner makes one.
  *
- * The command is never stored in bb nor set through it: bb names its app and its command line the same
- * caller, so anything a bb RPC or setting holds, an agent with `bb` could change. Only someone who can write
- * that file on that machine can choose what runs there. No RPC of this plugin reads the file or shows what is
- * in it; the settings page says whether it is there, and hands its path to bb's own file panel to open.
+ * The command is never stored in bb: it is the file on the machine. The settings' editor loads and saves that
+ * file there by its name (one of `HOOK_NAMES`), never a path; bb names its app and its command line the same
+ * caller, so an agent with `bb` can reach the editor's RPCs, as it can any file through `bb file write --host`.
  *
  * Shared by the app, the server and the host entry, so it imports zod only, never the SDK.
  */
@@ -108,3 +107,32 @@ export function relayLine(run: HookRun): string | null {
 export function hookFailed(run: HookRun): boolean {
   return run.failedToStart || run.timedOut || run.signal !== null || run.exitCode !== 0;
 }
+
+/** The largest hook file the settings' editor loads or saves. */
+export const HOOK_EDIT_MAX = 256 * 1024;
+
+export const HookNameSchema = z.enum(HOOK_NAMES);
+export type HookName = z.infer<typeof HookNameSchema>;
+
+/** The hook file that runs on a machine, as its editor loads it. */
+export const HookFileReadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("text"), name: HookNameSchema, path: z.string().max(1024), content: z.string().max(HOOK_EDIT_MAX), sha256: z.string(), executable: z.boolean() }),
+  /** No hook file there (any more). */
+  z.object({ kind: z.literal("missing") }),
+  /** One the editor does not load: too large, not text, or not readable. */
+  z.object({ kind: z.literal("unsupported"), name: HookNameSchema, reason: z.string().max(300) }),
+]);
+export type HookFileRead = z.infer<typeof HookFileReadSchema>;
+
+/** A save: the hook file by its name (never a path), its new text, and the hash of the text it was loaded as. */
+export const HookWriteSchema = z.object({ name: HookNameSchema, content: z.string().max(HOOK_EDIT_MAX), expectedSha256: z.string().regex(/^[0-9a-f]{64}$/u) }).strict();
+export type HookWrite = z.infer<typeof HookWriteSchema>;
+
+export const HookWriteResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("written"), sha256: z.string(), executable: z.boolean() }),
+  /** The file changed on disk since it was loaded (or is gone: `currentSha256` null); nothing was written. */
+  z.object({ outcome: z.literal("conflict"), currentSha256: z.string().nullable() }),
+  /** The machine was reached, but the file could not be written there (permissions, a full disk…). */
+  z.object({ outcome: z.literal("failed"), reason: z.string().max(300) }),
+]);
+export type HookWriteResult = z.infer<typeof HookWriteResultSchema>;

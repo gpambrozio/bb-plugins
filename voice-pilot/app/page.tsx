@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { voice, type VoiceState } from "./controller";
 import { DebugLogView } from "./debug";
-import { hookOpen, hookOpenFailed } from "./hook-file";
+import { hookOpen, hookOpenFailed, openHookEditor } from "./hook-file";
 import { PromptEditCard } from "./prompt-edit";
 import { PAUSED_NOTE, statusText, useVoiceState } from "./overlay";
 
@@ -40,7 +40,7 @@ export function HookFileOpener() {
   useEffect(() => {
     if (wanted === null) return;
     const taken = hookOpen.take();
-    if (taken !== null && !navigate.experimental_openFilePreview({ target: taken.target, location: null })) toast.info(hookOpenFailed(taken));
+    if (taken !== null && !openHookEditor((options) => navigate.experimental_openFilePreview(options), taken.target, taken.machine)) toast.info(hookOpenFailed(taken));
   }, [wanted, navigate]);
   return null;
 }

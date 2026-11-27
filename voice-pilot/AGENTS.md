@@ -27,7 +27,7 @@ the voice.
 | `server/credentials.ts`, `server/openai-call.ts`, `server/openai-port.ts` | The two connections (API key, ChatGPT through codex-realtime); the SDP exchange, hangup and sideband. |
 | `server/hooks.ts`, `host.ts`, `host/*`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks, unchanged from firstmate-voice but for the names (`VOICE_PILOT_HOOK`, `VOICE_PILOT_REASON`, `~/.config/voice-pilot/hook`). |
 | `shared/prompt-edit.ts`, `server/prompt-edits.ts`, `app/prompt-edit.tsx`, `app/prompt-edit-view.ts` | The voice's staged edit of its own instructions: the changes and the diff, the store, the RPCs (`promptHandlers`), the review card and the badge's pencil. |
-| `app/hook-file.ts` | The settings' **Open the script**, handed to the Voice page's file panel. |
+| `app/hook-file.ts`, `app/hook-editor.tsx`, `host/hook-file.ts` | The settings' **Open the script**, handed to the Voice page's file panel, and Voice Pilot's hook editor there: load and save on the hook's machine. |
 | `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts`, `app/open-settings.ts` | The session's log, its client-only RPC, the side-panel tab, the view the Voice page embeds, and its Settings button. |
 | `server/briefing/*` | briefing's server code from PR #127 at `da2a3d7`, without its CLI; `sdk-ports.ts` exports `toRow`, `chunks` and `ListRow` for `bb-port.ts`. |
 | `app.tsx`, `app/controller.ts`, `app/overlay.tsx`, `app/page.tsx`, `app/webrtc.ts`, `app/platform.ts` | The registrations; the per-window controller; the toast (an app overlay that holds the call); the Voice page; the WebRTC leg. |
@@ -64,17 +64,30 @@ the voice.
   unchanged. bb names its app and its command line the same `client`, so anything that can run `bb` against
   the owner's bb can start a session; it could reach bb's own thread APIs anyway.
 - **Hooks:** firstmate-voice's model and guarantees, unchanged (its `AGENTS.md`, "A hook never holds the
-  call up", and the hook's `BB_SERVER_URL`). No RPC, setting or host call takes a hook command or path
-  (`rpc.test.ts` checks the inputs); the host's `status` reports where the file is, only so that the settings'
-  **Open the script** can hand that path to bb's own file panel (`useBbNavigate().experimental_openFilePreview`
-  with a `host` target). bb reads the file there through its own file access, which already reaches any file
-  on an enrolled machine; Voice Pilot never reads, stores or writes it.
+  call up", and the hook's `BB_SERVER_URL`). No RPC, setting or host call takes a path (`rpc.test.ts` checks
+  every input): a machine's hook is the first of `HOOK_NAMES` in `~/.config/voice-pilot/` (`hook`, then
+  `hook.sh`, `.bash`, `.zsh`, `.fish`, `.py`, `.js`, `.mjs`, `.rb`, `.pl`), and only it runs. `hook` stays
+  first so a machine set up before the others existed runs what it ran. The status names it and any others.
+- **The hook editor writes the hook file, by name, on its machine.** The owner asked for an editor, so
+  `hooks.read` and `hooks.write` (app-only, `requireApp`) reach the host entry's `read` and `write`
+  (`host/hook-file.ts`): `write` takes one of `HOOK_NAMES`, never a path, writes in place (a link stays a link)
+  and puts the mode back, so an executable hook stays executable, and only when the file still has the hash
+  it was loaded with, else `conflict` (null when it is gone; nothing is created). A write the machine refuses
+  is `failed` with its reason; a host call that throws or takes over `HOOK_EDIT_TIMEOUT_MS` is "Could not reach
+  <machine>", so the two never mix. bb names its command line a client too, so an agent with `bb` can call
+  `hooks.write`; it could already write any file on any machine with `bb file write --host`, so this adds no
+  reach. The editor (`app/hook-editor.tsx`) is a `fileOpener` with no extensions, opened by name
+  (`opener: "hook-editor"`) in bb's file panel; it takes the machine from bb's `source.experimental_hostId`
+  (bb restored the tab with it after a page reload) or from the window's note of what it opened. An older bb
+  without file openers registers none, and the settings' button then opens bb's own preview.
+- **Why not bb's File Editor.** bb 0.50.1 picks a plugin file opener by extension, and `opener` names only the
+  calling plugin's own, so an extension-less file opens in bb's read-only preview. A `hook.sh` does open in
+  bb's File Editor (`monaco-editor`), but that editor resolves a `host` file only through an environment
+  (`environments.get(environmentId)`), and a plugin's `host` target has none: it showed "This file has no
+  environment to resolve it against".
 - **The hook script opens beside the Voice page.** bb's settings page has no file panel (`openFilePreview`
   answers false there, bb 0.50.1), so the button hands the request to the Voice page (`app/hook-file.ts`),
-  which opens it as it mounts; a request older than ten seconds is dropped. bb picks a plugin file opener,
-  its File Editor (`monaco-editor`) included, by the file's extension, and `openFilePreview`'s `opener` names
-  only the calling plugin's own: the extension-less hook file opens in bb's read-only preview. Live: the
-  preview's menu was Copy file path, Copy file contents, Download and Refresh.
+  which opens it as it mounts; a request older than ten seconds is dropped.
 - **The voice never changes its own instructions; it proposes.** `propose_instructions_edit` stages one edit
   (`server/prompt-edits.ts`, in `bb.storage.kv`), as changes quoted from the owner's part or as a whole text;
   only `prompt.apply` (as staged, or the owner's tweak) and `prompt.reject` change or drop it, behind
@@ -200,6 +213,11 @@ choice and says it back, and ends on "goodbye"; it spends about a minute of voic
   and the instructions stayed as applied. The badge: bb's icon-only rail drew a dot on the Mic icon. The
   settings' **Open the script** was checked in a dev bb started with a throwaway `HOME` (so the host entry
   read a scratch hook file, not the owner's): it landed on the Voice page with the script in bb's file panel.
+- `e2e-results/2026-11-27-hook-editor.json`: the hook editor, in a dev bb with a throwaway `HOME` holding a
+  `hook.sh` (755). It loaded the script, saved an edit (file changed, still 755), warned when a line was
+  appended on disk behind it (file untouched) and Save anyway replaced it (still 755); a page reload restored
+  the tab and it loaded again; with the dev bb's host daemon stopped (SIGSTOP), Save said "Could not reach
+  MacMini…" after 10 s, keeping the edit. Never point such a check at the owner's home folder.
 - **Not checked live:** the badge's `✎` text in bb's list layout of the sidebar (the run's was the rail),
   several turns finishing together (unit-tested), a bb link opened from the voice
   (unit-tested), a link in a real browser tab or bb's mobile app, an approval by voice (unit-tested; needs

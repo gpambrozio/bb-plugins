@@ -11,7 +11,7 @@ import { z } from "zod";
 import { sdkBb } from "./server/bb-port";
 import { CONNECTIONS, CREDENTIAL_PLUGIN, callToken } from "./server/credentials";
 import { DebugPageSchema } from "./server/debug-log";
-import { HOOK_CALL_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, machineHookStatuses } from "./server/hooks";
+import { HOOK_CALL_TIMEOUT_MS, HOOK_EDIT_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, machineHookStatuses, readMachineHook, writeMachineHook } from "./server/hooks";
 import { DEFAULT_INSTRUCTIONS, ownInstructions } from "./server/instructions";
 import { openAiRealtime } from "./server/openai-port";
 import { PromptEdits } from "./server/prompt-edits";
@@ -19,7 +19,7 @@ import { promptHandlers, sessionHandlers } from "./server/rpc";
 import { systemClock } from "./server/ports";
 import { VoiceSessions, type AnnounceLevel, type Eagerness, type SessionSignal } from "./server/session";
 import { SESSION_CHANNEL } from "./shared/channel";
-import { HookFileStatusSchema, type HookEvent } from "./shared/hooks";
+import { HookFileReadSchema, HookFileStatusSchema, HookWriteResultSchema, HookWriteSchema, type HookEvent, type HookWrite } from "./shared/hooks";
 import { hostContract } from "./shared/host-contract";
 import { PROMPT_EDIT_TAG, promptContract } from "./shared/prompt-edit";
 
@@ -62,6 +62,13 @@ export const rpcContract = defineRpcContract({
     input: z.object({}),
     output: z.object({ machines: z.array(z.object({ hostId: z.string(), name: z.string(), status: HookFileStatusSchema.nullable() })) }),
   },
+  /**
+   * The settings' hook editor: a machine's hook file as text, and saving it back by its name (one of the fixed
+   * hook names, never a path), only when it has not changed on disk since it was loaded. App only; bb's own
+   * `bb file write --host` reaches the same file, so this adds nothing an agent with `bb` could not do.
+   */
+  "hooks.read": { input: z.object({ hostId: HostId }), output: HookFileReadSchema },
+  "hooks.write": { input: HookWriteSchema.extend({ hostId: HostId }), output: HookWriteResultSchema },
 });
 
 export const SETTINGS = {
@@ -145,6 +152,8 @@ export default async function plugin(bb: BbPluginApi) {
   const hookHost = {
     status: (hostId: string) => hostClient.call("status", {}, { hostId, timeoutMs: HOOK_STATUS_TIMEOUT_MS }),
     run: (hostId: string, input: { event: HookEvent; reason: string | null }) => hostClient.call("run", input, { hostId, timeoutMs: HOOK_CALL_TIMEOUT_MS }),
+    read: (hostId: string) => hostClient.call("read", {}, { hostId, timeoutMs: HOOK_EDIT_TIMEOUT_MS }),
+    write: (hostId: string, input: HookWrite) => hostClient.call("write", input, { hostId, timeoutMs: HOOK_EDIT_TIMEOUT_MS }),
   };
   const hooks = new HookRunner({ host: hookHost, clock: systemClock, log: bb.log });
   const credentials = {
@@ -196,7 +205,12 @@ export default async function plugin(bb: BbPluginApi) {
   const activeHosts = async () =>
     (await bb.sdk.hosts.list()).filter((host) => (host.lifecycle?.phase ?? "active") === "active").map(({ id, name }) => ({ id, name }));
   bb.rpc.register(rpcContract, {
-    ...sessionHandlers(sessions, { hosts: activeHosts, statuses: (hosts) => machineHookStatuses(hosts, hookHost, systemClock) }),
+    ...sessionHandlers(sessions, {
+      hosts: activeHosts,
+      statuses: (hosts) => machineHookStatuses(hosts, hookHost, systemClock),
+      read: async (hostId) => readMachineHook(hostId, await activeHosts(), hookHost, systemClock),
+      write: async (hostId, input) => writeMachineHook(hostId, input, await activeHosts(), hookHost, systemClock),
+    }),
     ...promptHandlers(prompts),
   });
 

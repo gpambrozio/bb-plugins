@@ -14,13 +14,19 @@ interface Registered {
   composer: { id: string; scopes?: string[]; actions?: { id: string }[] }[];
   settings: { id: string; title: string }[];
   navPanels: { id: string; title: string; icon: string; path: string; experimental_useBadge?: unknown }[];
+  fileOpeners: { id: string; title: string; extensions: string[] }[];
 }
 
-async function setUp(): Promise<Registered> {
-  const registered: Registered = { tabs: [], commands: [], threadActions: [], composer: [], settings: [], navPanels: [] };
+/** `fileOpener`: whether this bb has file openers (bb 0.50 does; older ones do not). */
+async function setUp(options: { fileOpener?: boolean } = {}): Promise<Registered> {
+  const registered: Registered = { tabs: [], commands: [], threadActions: [], composer: [], settings: [], navPanels: [], fileOpeners: [] };
   const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
   const slots = new Proxy({} as Record<string, unknown>, {
+    has: (_target, name) => name !== "fileOpener" || options.fileOpener !== false,
     get: (_target, name) =>
+      name === "fileOpener"
+        ? (opener: Registered["fileOpeners"][number]) => registered.fileOpeners.push(opener)
+        :
       name === "experimental_tab"
         ? (tab: Record<string, unknown>) => registered.tabs.push(tab)
         : name === "experimental_threadAction"
@@ -109,6 +115,19 @@ describe("the sidebar badge", () => {
     expect(liveBadge({ ...idle, phase: "paused" })?.text).toBe("Paused");
     expect(liveBadge({ ...idle, phase: "resuming" })?.text).toBe("…");
     expect(liveBadge(idle)).toBeNull();
+  });
+});
+
+describe("the hook editor", () => {
+  it("is a file opener that no extension selects: only the settings' Open the script names it", async () => {
+    const { fileOpeners } = await setUp();
+    expect(fileOpeners.map(({ id, title, extensions }) => ({ id, title, extensions }))).toEqual([{ id: "hook-editor", title: "Voice hook editor", extensions: [] }]);
+  });
+
+  it("is left out on a bb without file openers, which still loads the rest", async () => {
+    const { fileOpeners, navPanels } = await setUp({ fileOpener: false });
+    expect(fileOpeners).toEqual([]);
+    expect(navPanels).toHaveLength(1);
   });
 });
 

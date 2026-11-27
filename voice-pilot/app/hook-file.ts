@@ -57,6 +57,28 @@ export function makeHookOpenRequest(now: () => number = Date.now): HookOpenReque
 
 export const hookOpen = makeHookOpenRequest();
 
+/** The id of Voice Pilot's hook editor (`app/hook-editor.tsx`), the file opener Open the script names. */
+export const HOOK_EDITOR_ID = "hook-editor";
+
+/** Where each opened script is, by path: bb may not pass the machine to the editor, and the name is for its messages. */
+const opened = new Map<string, { hostId: string; machine: string }>();
+
+/** Notes the machine of a script being opened, for its editor. */
+export function rememberEditorMachine(target: HookFileTarget, machine: string): void {
+  opened.set(target.path, { hostId: target.hostId, machine });
+}
+
+/** The machine of a script opened in this window, or undefined. */
+export function editorMachine(path: string): { hostId: string; machine: string } | undefined {
+  return opened.get(path);
+}
+
+/** Opens a hook script in Voice Pilot's editor, in the file panel of the surface `open` belongs to. */
+export function openHookEditor(open: (options: { target: HookFileTarget; location: null; opener: string }) => boolean, target: HookFileTarget, machine: string): boolean {
+  rememberEditorMachine(target, machine);
+  return open({ target, location: null, opener: HOOK_EDITOR_ID });
+}
+
 /** What to say when bb could not open the script, so the owner can find it. */
 export function hookOpenFailed(wanted: Pick<HookOpenWanted, "target" | "machine">): string {
   return `bb could not open the hook script. It is ${wanted.target.path} on ${wanted.machine}.`;

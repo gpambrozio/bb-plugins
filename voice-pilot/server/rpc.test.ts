@@ -48,6 +48,14 @@ function setup() {
       calls.push(`hook status ${hosts.map((host) => host.id).join(",")}`);
       return hosts.map((host) => ({ hostId: host.id, name: host.name, status: { present: true, executable: true } }));
     },
+    read: async (hostId: string) => {
+      calls.push(`hook read ${hostId}`);
+      return { kind: "missing" as const };
+    },
+    write: async (hostId: string, input: { name: string }) => {
+      calls.push(`hook write ${hostId} ${input.name}`);
+      return { outcome: "written" as const, sha256: "b".repeat(64), executable: true };
+    },
   };
   return { calls, handlers: sessionHandlers(sessions as never, hooks) };
 }
@@ -66,6 +74,8 @@ describe("the session RPCs", () => {
     await expect(handlers["session.current"]({}, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["debug.log"]({ afterSeq: 0 }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["hooks.status"]({}, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(handlers["hooks.read"]({ hostId: "host_mine" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(handlers["hooks.write"]({ hostId: "host_mine", name: "hook", content: "x", expectedSha256: "a".repeat(64) }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     expect(calls).toEqual([]);
   });
 
@@ -82,12 +92,16 @@ describe("the session RPCs", () => {
     expect(await handlers["session.focus"]({ sessionId: "vp_1", threadId: null }, APP)).toBeNull();
     expect(await handlers["debug.log"]({ afterSeq: 3 }, APP)).toMatchObject({ sessionId: "vp_1" });
     expect(await handlers["hooks.status"]({}, APP)).toEqual({ machines: [{ hostId: "host_mine", name: "Studio", status: { present: true, executable: true } }] });
+    expect(await handlers["hooks.read"]({ hostId: "host_mine" }, APP)).toEqual({ kind: "missing" });
+    expect(await handlers["hooks.write"]({ hostId: "host_mine", name: "hook.sh", content: "x", expectedSha256: "a".repeat(64) }, APP)).toMatchObject({ outcome: "written" });
     expect(calls).toEqual([
       'start v=0 offer {"hostId":null,"why":"a browser tab runs no hooks; bb\'s desktop app does"} thr_a',
       "alive thr_b",
       "focus null",
       "debug 3",
       "hook status host_mine",
+      "hook read host_mine",
+      "hook write host_mine hook.sh",
     ]);
   });
 
@@ -123,20 +137,25 @@ function inputKeys(schema: unknown): string[] {
 
 describe("the voice hooks' command", () => {
   // bb names its command line a client too, so anything an RPC or a setting could set, an agent could.
-  it("cannot be set, read or named through any RPC or setting: each machine runs its own file", () => {
+  it("is not a setting, and no RPC names a path: only the editor's write saves a hook file, by its fixed name", () => {
     const methods = Object.keys(rpcContract);
-    expect(methods.filter((method) => method.startsWith("hooks."))).toEqual(["hooks.status"]);
-    expect(methods.some((method) => /set|save|write|update/iu.test(method))).toBe(false);
+    expect(methods.filter((method) => method.startsWith("hooks."))).toEqual(["hooks.status", "hooks.read", "hooks.write"]);
+    expect(methods.filter((method) => /set|save|write|update/iu.test(method))).toEqual(["hooks.write"]);
     for (const [method, { input }] of Object.entries(rpcContract)) {
-      expect(inputKeys(input).filter((key) => /command|script|path|file|hook/iu.test(key)), method).toEqual([]);
+      expect(inputKeys(input).filter((key) => /command|path|file|dir/iu.test(key)), method).toEqual([]);
     }
+    expect(inputKeys(rpcContract["hooks.write"].input).sort()).toEqual(["content", "expectedSha256", "hostId", "name"]);
+    expect(() => rpcContract["hooks.write"].input.parse({ hostId: "h", name: "/etc/hosts", content: "x", expectedSha256: "a".repeat(64) })).toThrow();
     expect(Object.keys(SETTINGS).filter((key) => /hook|command|script/iu.test(key))).toEqual([]);
   });
 
-  it("is never sent to a machine either: the host calls take only the moment and the reason", () => {
+  it("is never sent to a machine as a path: running takes the moment and the reason, the editor's write a fixed name", () => {
     expect(inputKeys(hostContract.status.input)).toEqual([]);
     expect(inputKeys(hostContract.run.input)).toEqual(["event", "reason"]);
     expect(() => hostContract.run.input.parse({ event: "listening-started", reason: null, command: "touch /tmp/x" })).toThrow();
+    expect(inputKeys(hostContract.read.input)).toEqual([]);
+    expect(inputKeys(hostContract.write.input).sort()).toEqual(["content", "expectedSha256", "name"]);
+    expect(() => hostContract.write.input.parse({ name: "hook", path: "/tmp/x", content: "x", expectedSha256: "a".repeat(64) })).toThrow();
   });
 });
 
