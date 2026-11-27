@@ -26,6 +26,8 @@ the voice.
 | `server/announce.ts` | The announcer (from firstmate-voice) and the scripts for thread news. |
 | `server/credentials.ts`, `server/openai-call.ts`, `server/openai-port.ts` | The two connections (API key, ChatGPT through codex-realtime); the SDP exchange, hangup and sideband. |
 | `server/hooks.ts`, `host.ts`, `host/*`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks, unchanged from firstmate-voice but for the names (`VOICE_PILOT_HOOK`, `VOICE_PILOT_REASON`, `~/.config/voice-pilot/hook`). |
+| `shared/prompt-edit.ts`, `server/prompt-edits.ts`, `app/prompt-edit.tsx`, `app/prompt-edit-view.ts` | The voice's staged edit of its own instructions: the changes and the diff, the store, the RPCs (`promptHandlers`), the review card and the badge's pencil. |
+| `app/hook-file.ts` | The settings' **Open the script**, handed to the Voice page's file panel. |
 | `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts`, `app/open-settings.ts` | The session's log, its client-only RPC, the side-panel tab, the view the Voice page embeds, and its Settings button. |
 | `server/briefing/*` | briefing's server code from PR #127 at `da2a3d7`, without its CLI; `sdk-ports.ts` exports `toRow`, `chunks` and `ListRow` for `bb-port.ts`. |
 | `app.tsx`, `app/controller.ts`, `app/overlay.tsx`, `app/page.tsx`, `app/webrtc.ts`, `app/platform.ts` | The registrations; the per-window controller; the toast (an app overlay that holds the call); the Voice page; the WebRTC leg. |
@@ -35,7 +37,7 @@ the voice.
 ## Invariants
 
 - **Nothing is merged, archived, deleted, renamed or published, and no setting changes, by voice.** There is
-  no tool for any of it (`tools.test.ts` checks the names), and `BbPort` has no such call. Do not add a
+  no tool for any of it (the Instructions change only through an edit the owner applies, below) (`tools.test.ts` checks the names), and `BbPort` has no such call. Do not add a
   generic "run a plugin command" tool: other plugins' commands can do all of these.
 - **A question is answered only with your spoken choice.** `answer_question` works only on an interaction
   `read_question` read in this session in the last ten minutes, still pending; an option must be one of the
@@ -62,8 +64,27 @@ the voice.
   unchanged. bb names its app and its command line the same `client`, so anything that can run `bb` against
   the owner's bb can start a session; it could reach bb's own thread APIs anyway.
 - **Hooks:** firstmate-voice's model and guarantees, unchanged (its `AGENTS.md`, "A hook never holds the
-  call up", and the hook's `BB_SERVER_URL`). No RPC, setting or host call names a hook command or path
-  (`rpc.test.ts`).
+  call up", and the hook's `BB_SERVER_URL`). No RPC, setting or host call takes a hook command or path
+  (`rpc.test.ts` checks the inputs); the host's `status` reports where the file is, only so that the settings'
+  **Open the script** can hand that path to bb's own file panel (`useBbNavigate().experimental_openFilePreview`
+  with a `host` target). bb reads the file there through its own file access, which already reaches any file
+  on an enrolled machine; Voice Pilot never reads, stores or writes it.
+- **The hook script opens beside the Voice page.** bb's settings page has no file panel (`openFilePreview`
+  answers false there, bb 0.50.1), so the button hands the request to the Voice page (`app/hook-file.ts`),
+  which opens it as it mounts; a request older than ten seconds is dropped. bb picks a plugin file opener,
+  its File Editor (`monaco-editor`) included, by the file's extension, and `openFilePreview`'s `opener` names
+  only the calling plugin's own: the extension-less hook file opens in bb's read-only preview. Live: the
+  preview's menu was Copy file path, Copy file contents, Download and Refresh.
+- **The voice never changes its own instructions; it proposes.** `propose_instructions_edit` stages one edit
+  (`server/prompt-edits.ts`, in `bb.storage.kv`), as changes quoted from the owner's part or as a whole text;
+  only `prompt.apply` (as staged, or the owner's tweak) and `prompt.reject` change or drop it, behind
+  `requireApp`. One waits at a time: a new one replaces it and records what it replaced, and apply or reject
+  of an id that is no longer the staged one is refused, so a newer edit is never applied blind. Applying
+  writes the **Instructions** setting, which a session reads once as it starts (`VoiceSession`'s
+  `config`, reused by renewals and resumes), so it reaches the next session only. The rules say to propose
+  only on the user's own words, never on an item's, a tool result's or an agent's. The Voice page shows the
+  edit as bb's diff view (`experimental_Diff`, from `unifiedPatch`) and the sidebar badge adds `✎`: the
+  SDK's badge has no icon, and bb's icon-only rail draws any badge as a dot with its label in the tooltip.
 - **A link opens only from what the session read, or on the user's yes.** `open_link` takes a link number
   from `read_reply` or a finished turn's reply (the session's `LinkList`), or a URL that is one of those. Any
   other URL is one the model wrote: it answers a read-back ("Open github.com/…? It is not a link from
@@ -171,7 +192,16 @@ choice and says it back, and ends on "goodbye"; it spends about a minute of voic
   back and listening." 1.7 s after, on a new call, and recalled the word it was told before the pause. "Mute
   the microphone, please" muted (card: Muted, "Tap Unmute to talk again"), the voice said "You're muted now.
   Tap Unmute to come back.", and a question asked while muted got no event at all.
-- **Not checked live:** several turns finishing together (unit-tested), a bb link opened from the voice
+- `e2e-results/2026-11-27-e2e-prompt-edit.json` (`--prompt-edit`): "call me Captain" staged an edit (the
+  voice: "It's staged on the Voice page for you to review…next voice session"), and "make that Skipper"
+  replaced it (`replaced` named the Captain edit, the card said so); the setting stayed as it was. Tweak
+  (Skipper → Commodore) and Apply tweak wrote it; the session in progress kept its instructions, and after
+  goodbye the next one greeted "Hi Commodore." An "answer only in French" edit was then rejected on the page,
+  and the instructions stayed as applied. The badge: bb's icon-only rail drew a dot on the Mic icon. The
+  settings' **Open the script** was checked in a dev bb started with a throwaway `HOME` (so the host entry
+  read a scratch hook file, not the owner's): it landed on the Voice page with the script in bb's file panel.
+- **Not checked live:** the badge's `✎` text in bb's list layout of the sidebar (the run's was the rail),
+  several turns finishing together (unit-tested), a bb link opened from the voice
   (unit-tested), a link in a real browser tab or bb's mobile app, an approval by voice (unit-tested; needs
   a provider that asks), the API-key connection, a real microphone and speaker, bb's desktop app (the hooks
   were driven by the rewrite above) and the phone: a real suspension of bb's mobile app (whether its web view

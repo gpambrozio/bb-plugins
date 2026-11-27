@@ -19,18 +19,18 @@ export function hookPath(home: string = homedir()): string {
   return join(home, ...HOOK_FILE.split("/"));
 }
 
-/** Whether `file` is there (a file, or a link to one) and can be run. Reads nothing of it. */
+/** Whether `file` is there (a file, or a link to one) and can be run, and where it is. Reads nothing of it. */
 export async function hookStatus(file: string = hookPath()): Promise<HookFileStatus> {
   try {
-    if (!(await stat(file)).isFile()) return { present: false, executable: false };
+    if (!(await stat(file)).isFile()) return { present: false, executable: false, path: file };
   } catch {
-    return { present: false, executable: false };
+    return { present: false, executable: false, path: file };
   }
   try {
     await access(file, constants.X_OK);
-    return { present: true, executable: true };
+    return { present: true, executable: true, path: file };
   } catch {
-    return { present: true, executable: false };
+    return { present: true, executable: false, path: file };
   }
 }
 

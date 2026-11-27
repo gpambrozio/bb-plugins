@@ -521,6 +521,17 @@ showing, and a nav panel shows none. To put text in a thread's draft from a page
 `scope`; check on every render and poll briefly, since a scope can change in place and the SDK
 harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
 
+**Opening a file in bb's file panel needs a surface that has one.** `useBbNavigate().experimental_openFilePreview`
+answers false on bb's settings page (bb 0.50.1), so a settings section hands the request to the plugin's own
+page and opens it there (`voice-pilot/app/hook-file.ts`). A `host` target (`{ kind: "host", hostId, path }`)
+opens any file on an enrolled machine through bb's own file access. bb picks a plugin file opener, its
+bundled File Editor (`monaco-editor`) included, by the file's extension, and `opener` names only the calling
+plugin's own registrations, so a file without an extension always opens in bb's read-only preview.
+
+**A sidebar badge has no icon.** `experimental_useBadge` takes `count`, `text` (8 characters), `tone` and
+`label`; a glyph such as `✎` in `text` is the nearest thing, and bb's icon-only rail draws any badge as a dot
+with `label` in its tooltip (`voice-pilot/app/prompt-edit-view.ts`).
+
 **A plugin cannot tell one device from another.** The SDK names no client, device or native app (SDK
 0.6.104–0.6.132); the only form-factor signal is `isCompactViewport`, which bb passes to several slots
 (navigation, thread list, …) and which is its `(max-width: 767px)` test, so a narrow desktop window counts

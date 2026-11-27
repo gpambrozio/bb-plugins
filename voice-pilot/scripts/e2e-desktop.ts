@@ -21,6 +21,12 @@
 // burst and a mumbled "hmm") and checks that none of it is answered, then asks a real question and times the
 // answer from the end of the speech.
 //
+// With --prompt-edit, the voice is asked to change its own instructions, twice: the second edit must replace the
+// first (one waits at a time), and neither may touch the setting. On the Voice page the card must show the diff
+// and say what was replaced, and the sidebar entry the pencil; the owner's Tweak (Skipper → Commodore) is applied.
+// After goodbye, a new session must greet with the applied instructions. A third edit is then rejected on the
+// page, and the instructions must stay as applied.
+//
 // With --pause, the page passes for bb's mobile app once loaded (a `window.bb.native` bridge, set after bb's
 // own app has started, which reads it only at start), so the session is a phone's. It is told something to
 // remember, then the page is hidden as bb leaving the phone's screen: the card must say Paused and the
@@ -54,12 +60,15 @@ const { values } = parseArgs({
     rich: { type: "string" },
     noise: { type: "boolean", default: false },
     pause: { type: "boolean", default: false },
+    "prompt-edit": { type: "boolean", default: false },
   },
 });
 const base = new URL(values.url);
 if (base.port === "38886" || base.port === "38887") throw new Error("That is the owner's bb. Use a dev bb.");
 if (values.bb === undefined) throw new Error("--bb is required.");
-if (values.question === undefined && values.rich === undefined && !values.noise && !values.pause) throw new Error("--question, --rich, --noise or --pause is required.");
+if (values.question === undefined && values.rich === undefined && !values.noise && !values.pause && !values["prompt-edit"]) {
+  throw new Error("--question, --rich, --noise, --pause or --prompt-edit is required.");
+}
 const questionThread = values.question ?? "";
 const devBb = values.bb;
 mkdirSync(values.out, { recursive: true });
@@ -95,6 +104,17 @@ function debugEntries(): { at: number; kind: string; title: string; text?: strin
   type Entry = { at: number; kind: string; title: string; text?: string };
   const parsed = JSON.parse(raw) as { result?: { entries: Entry[] }; entries?: Entry[] };
   return parsed.result?.entries ?? parsed.entries ?? [];
+}
+
+type Staged = { staged: { id: string; summary: string; proposed: string; replaced: { summary: string } | null } | null; current: string };
+
+/** The staged instructions edit and the instructions in force, through the dev bb's CLI. */
+function stagedEdit(): Staged {
+  const input = join(values.out, "empty.json");
+  writeFileSync(input, "{}");
+  const raw = execFileSync(devBb, ["plugin", "rpc", "call", "voice-pilot", "prompt.staged", "--input-file", input], { encoding: "utf8" });
+  const parsed = JSON.parse(raw) as { result?: Staged } & Partial<Staged>;
+  return parsed.result ?? (parsed as Staged);
 }
 
 /** A tool's answer as the session's debug log has it, the newest after `since`. */
@@ -400,6 +420,69 @@ try {
         .map((entry) => entry.title),
     };
     console.log("pause:", report.pause);
+  }
+
+  if (values["prompt-edit"]) {
+    const before = stagedEdit();
+    const firstAt = await speak(page, "From now on, I'd like you to call me Captain. Please change your instructions so you always do.");
+    const first = await until("a staged edit", 60_000, () => stagedEdit().staged);
+    await quiet(page);
+    const firstSaid = await voiceSaid(page, firstAt);
+    const secondAt = await speak(page, "Actually, make that Skipper instead of Captain, from now on.");
+    const second = await until("a second staged edit", 60_000, () => {
+      const now = stagedEdit().staged;
+      return now !== null && now.id !== first.id ? now : null;
+    });
+    await quiet(page);
+    const secondSaid = await voiceSaid(page, secondAt);
+    const afterStaging = stagedEdit();
+    const card = page.getByRole("region", { name: "Proposed instructions edit" });
+    await card.waitFor({ timeout: 15_000 });
+    const replacedNote = await card.getByText(/This replaced the edit proposed at/u).count();
+    const pencil = await page.getByText("✎").count();
+    await page.screenshot({ path: join(values.out, "page-prompt-edit.png") });
+    await card.getByRole("button", { name: "Tweak" }).click();
+    const box = card.getByRole("textbox", { name: "Tweak the proposed instructions" });
+    const tweaked = (await box.inputValue()).replace(/Skipper/gu, "Commodore");
+    await box.fill(tweaked);
+    await page.screenshot({ path: join(values.out, "page-prompt-tweak.png") });
+    await card.getByRole("button", { name: "Apply tweak" }).click();
+    await page.getByText("Applied your tweak. The next voice session starts with it.").waitFor({ timeout: 15_000 });
+    const applied = stagedEdit();
+    const sessionOneLog = debugEntries().filter((entry) => entry.title === "Standing instructions").map((entry) => entry.text ?? "");
+    const byeOne = await speak(page, "That's all, goodbye.");
+    await page.getByText(/Voice ended/u).first().waitFor({ timeout: 30_000 });
+    const byeOneSaid = await voiceSaid(page, byeOne);
+    const t1 = Date.now();
+    await page.getByRole("button", { name: /^Talk$/u }).first().click();
+    await until("the second greeting", 30_000, async () => (await voiceSaid(page, t1))[0]);
+    await quiet(page);
+    const secondGreeting = await voiceSaid(page, t1);
+    const sessionTwoStanding = debugEntries().find((entry) => entry.title === "Standing instructions")?.text ?? "";
+    const thirdAt = await speak(page, "From now on, answer only in French. Change your instructions for that.");
+    const third = await until("a third staged edit", 60_000, () => stagedEdit().staged);
+    await quiet(page);
+    const thirdSaid = await voiceSaid(page, thirdAt);
+    await card.waitFor({ timeout: 15_000 });
+    await card.getByRole("button", { name: "Reject" }).click();
+    await page.getByText("Rejected. The instructions stay as they were.").waitFor({ timeout: 15_000 });
+    const rejected = stagedEdit();
+    report.promptEdit = {
+      before: { staged: before.staged, settingHadSkipper: before.current.includes("Skipper") },
+      first: { summary: first.summary, said: firstSaid },
+      second: { summary: second.summary, replaced: second.replaced, said: secondSaid },
+      settingUntouchedWhileStaged: afterStaging.current === before.current,
+      card: { replacedNote, pencil },
+      tweakApplied: { staged: applied.staged, hasCommodore: applied.current.includes("Commodore"), hasSkipper: applied.current.includes("Skipper") },
+      sessionOneStandingHadCommodore: sessionOneLog.some((text) => text.includes("Commodore")),
+      goodbyeOne: byeOneSaid,
+      secondGreeting,
+      secondGreetingSaysCommodore: secondGreeting.join(" ").toLowerCase().includes("commodore"),
+      sessionTwoStandingHasCommodore: sessionTwoStanding.includes("Commodore"),
+      third: { summary: third.summary, said: thirdSaid },
+      afterReject: { staged: rejected.staged, unchanged: rejected.current === applied.current, french: /french/iu.test(rejected.current) },
+    };
+    console.log("prompt edit:", JSON.stringify(report.promptEdit, null, 2));
   }
 
   if (values.actions) {

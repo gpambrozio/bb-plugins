@@ -2,8 +2,8 @@
  * Voice Pilot's app. One controller per window (`app/controller.ts`), shared by:
  *
  * - the toast (an app overlay in every window, which holds the call and survives navigation),
- * - the **Voice** page in bb's sidebar (Talk, End, Mute, the state and the session's log), with a "Live" badge
- *   on its entry while a session is up,
+ * - the **Voice** page in bb's sidebar (Talk, End, Mute, the state, the voice's staged instructions edit and the
+ *   session's log), with a "Live" badge on its entry while a session is up and a pencil while an edit waits,
  * - a **Talk** button in every thread's header (folded into the thread menu on a narrow screen),
  * - the palette commands **Voice Pilot: talk or end** and **Voice Pilot: debug log**.
  *
@@ -18,6 +18,8 @@ import { DEBUG_TAB, openDebugLog } from "./app/debug-view";
 import { VoiceHooksSection } from "./app/hooks-section";
 import { VOICE_PAGE, VoicePill, useVoiceState } from "./app/overlay";
 import { VoicePage } from "./app/page";
+import { useStagedEdit } from "./app/prompt-edit";
+import { withPencil } from "./app/prompt-edit-view";
 
 /** The sidebar entry's badge: "Live" while a session is up, "Paused" while bb was off the phone's screen. */
 export function liveBadge(state: VoiceState) {
@@ -27,8 +29,10 @@ export function liveBadge(state: VoiceState) {
   return null;
 }
 
+/** The session's badge, with a pencil after it while an edit of the voice's instructions waits for review. */
 function useLiveBadge() {
-  return liveBadge(useVoiceState());
+  const voiceBadge = liveBadge(useVoiceState());
+  return withPencil(voiceBadge, useStagedEdit().staged !== null);
 }
 
 export default definePluginApp((app) => {

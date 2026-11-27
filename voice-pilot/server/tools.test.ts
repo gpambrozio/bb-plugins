@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { DebugLog } from "./debug-log";
 import { UtteranceLog } from "./policy";
-import { CONFIRM_WINDOW_MS, TOOLS, VoiceTools } from "./tools";
+import { PromptEdits } from "./prompt-edits";
+import { CONFIRM_WINDOW_MS, TOOLS, VoiceTools, type ToolDeps } from "./tools";
 import { FakeBb, FakeClock, commandApproval, providerQuestion, thread } from "./testing/fakes";
 
-function setup() {
+function setup(extra: Partial<ToolDeps> = {}) {
   const clock = new FakeClock();
   const bb = new FakeBb();
   const utterances = new UtteranceLog(clock);
@@ -27,6 +28,7 @@ function setup() {
     end: () => (ended += 1),
     mute: () => (muted += 1),
     sent: (id) => sent.push(id),
+    ...extra,
   });
   let n = 0;
   /** The user says `text`, a moment later. */
@@ -366,5 +368,60 @@ describe("approvals", () => {
     await run("read_question", { thread_id: "thr_a" });
     expect(await run("answer_question", { thread_id: "thr_a", interaction_id: "int_a1", answers: [{ options: [1] }] })).toMatchObject({ ok: false });
     expect(await run("decide_request", { thread_id: "thr_a", interaction_id: "int_q1", decision: "allow_once" })).toMatchObject({ ok: false });
+  });
+});
+
+describe("an edit of the voice's own instructions", () => {
+  const NOW = "You are Voice Pilot.\n\nStyle: speak briefly.";
+  function staging() {
+    const rows = new Map<string, unknown>();
+    const writes: string[] = [];
+    const prompts = new PromptEdits({
+      kv: { get: async <T>(key: string) => rows.get(key) as T | undefined, set: async (key, value) => void rows.set(key, value), delete: async (key) => void rows.delete(key) },
+      instructions: { get: async () => NOW, set: async (text) => void writes.push(text) },
+      clock: { now: () => 5_000 },
+      log: { info: () => undefined, warn: () => undefined },
+      changed: () => undefined,
+    });
+    return { prompts, writes, ...setup({ stageInstructions: (request) => prompts.stage(request) }) };
+  }
+
+  it("is a tool, and its description says it is staged for review and reaches the next session only", () => {
+    const tool = TOOLS.find((item) => item.name === "propose_instructions_edit");
+    expect(tool?.description).toMatch(/never applied by you: it is staged/u);
+    expect(tool?.description).toMatch(/from the next voice session, never this one/u);
+  });
+
+  it("stages the edit, never applies it, and tells the voice what to say", async () => {
+    const { run, prompts, writes, debug } = staging();
+    const result = await run("propose_instructions_edit", { summary: "Call the user Sam", changes: [{ find: "speak briefly.", replace: "speak briefly, and call the user Sam." }] });
+    expect(result).toMatchObject({ ok: true, staged: true });
+    expect(String(result.note)).toMatch(/staged, not applied.*Voice page.*next voice session, not this one/u);
+    expect(result).not.toHaveProperty("replaced_edit");
+    expect(writes).toEqual([]);
+    expect((await prompts.staged())?.proposed).toBe("You are Voice Pilot.\n\nStyle: speak briefly, and call the user Sam.");
+    expect(debug.page(0).entries.at(-1)?.title).toBe("Staged an instructions edit for review: Call the user Sam");
+  });
+
+  it("says when it replaced the edit that was waiting", async () => {
+    const { run } = staging();
+    await run("propose_instructions_edit", { summary: "First", text: `${NOW}\n\nOne.` });
+    const second = await run("propose_instructions_edit", { summary: "Second", text: `${NOW}\n\nTwo.` });
+    expect(second).toMatchObject({ ok: true, replaced_edit: "First" });
+    expect(String(second.note)).toMatch(/replaced the edit that was waiting/u);
+  });
+
+  it("refuses both or neither of changes and text, a malformed change, and a quote that is not there", async () => {
+    const { run, prompts } = staging();
+    expect(await run("propose_instructions_edit", { summary: "x" })).toMatchObject({ ok: false, error: expect.stringMatching(/either changes or the whole new text/u) });
+    expect(await run("propose_instructions_edit", { summary: "x", text: "a", changes: [] })).toMatchObject({ ok: false });
+    expect(await run("propose_instructions_edit", { summary: "x", changes: [{ find: 3 }] })).toMatchObject({ ok: false, error: expect.stringMatching(/find and a replace/u) });
+    expect(await run("propose_instructions_edit", { summary: "x", changes: [{ find: "missing", replace: "y" }] })).toMatchObject({ ok: false, error: expect.stringMatching(/not in the instructions/u) });
+    await expect(prompts.staged()).resolves.toBeNull();
+  });
+
+  it("is refused where nothing can stage it", async () => {
+    const { run } = setup();
+    expect(await run("propose_instructions_edit", { summary: "x", text: "y" })).toMatchObject({ ok: false });
   });
 });

@@ -33,7 +33,7 @@ import { GREETING_NOW, RENEWAL_NOTE, RESUME_NOTE, RESUME_NOW, standingInstructio
 import { UtteranceLog, isNoise } from "./policy";
 import { errorText, type Clock, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
 import { LinkList, parts, readableReply } from "./rich";
-import { VoiceTools, realtimeTools } from "./tools";
+import { VoiceTools, realtimeTools, type ToolDeps } from "./tools";
 
 export const RENEW_AFTER_MS = 57 * 60_000;
 /** How long the app has to send a renewal offer before the session ends. */
@@ -115,6 +115,8 @@ export interface SessionDeps {
   publish(signal: SessionSignal): void;
   /** The voice hooks; none in tests that do not need them. */
   hooks?: HookRunner;
+  /** Stages an edit of the instructions for the owner's review (`prompt-edits.ts`); none in tests that do not need it. */
+  stageInstructions?: ToolDeps["stageInstructions"];
 }
 
 /** How long a plugin that stops waits for the last session's closing hooks. */
@@ -293,6 +295,7 @@ export class VoiceSession {
       },
       openLink: (url, label) => this.deps.publish({ sessionId: this.id, type: "open-link", url, label }),
       mute: () => this.deps.publish({ sessionId: this.id, type: "mute" }),
+      ...(deps.stageInstructions === undefined ? {} : { stageInstructions: deps.stageInstructions }),
       links: this.links,
       focused: () => this.focusedThread,
       end: () => this.later(GOODBYE_MS, () => void this.end("ended by voice")),

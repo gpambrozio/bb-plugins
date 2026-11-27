@@ -12,6 +12,7 @@ import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPlu
 
 import type { rpcContract } from "../server";
 import { hookTarget, type MachineHookStatus } from "./hooks";
+import type { PromptEdits } from "./prompt-edits";
 import type { VoiceSessions } from "./session";
 
 type Caller = { kind: string } | undefined;
@@ -29,10 +30,35 @@ export interface HooksRpcPort {
   statuses(hosts: Array<{ id: string; name: string }>): Promise<MachineHookStatus[]>;
 }
 
+type PromptMethods = "prompt.staged" | "prompt.apply" | "prompt.reject";
+
+/**
+ * The staged edit of the voice's instructions. Only bb's app (or its command line, which bb cannot tell apart)
+ * reads, applies or rejects it; the voice only stages one, through its tool. See AGENTS.md.
+ */
+export function promptHandlers(prompts: Pick<PromptEdits, "read" | "apply" | "reject">): Pick<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>, PromptMethods> {
+  return {
+    "prompt.staged": async (_input, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return prompts.read();
+    },
+    "prompt.apply": async ({ id, text }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      await prompts.apply(id, text);
+      return { applied: true as const };
+    },
+    "prompt.reject": async ({ id }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      await prompts.reject(id);
+      return null;
+    },
+  };
+}
+
 export function sessionHandlers(
   sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "pause" | "resume" | "alive" | "focus" | "current" | "debugPage">,
   hooks: HooksRpcPort,
-): ExperimentalPluginRpcHandlersWithContext<typeof rpcContract> {
+): Omit<ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>, PromptMethods> {
   return {
     "session.start": async ({ sdp, hostId, client, threadId }, ctx) => {
       requireApp(ctx?.experimental_caller);

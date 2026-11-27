@@ -42,8 +42,14 @@ subscription.
 - **Mutes when you ask.** Say "mute" and it mutes your microphone, the same mute as the **Mute** button, and
   the session goes on: it says so, and the card says to tap **Unmute** to talk again (once muted, it cannot
   hear you, so unmuting is a tap).
+- **Proposes changes to its own instructions, and you decide.** Say "from now on, call me Sam" and the voice
+  stages an edit of its **Instructions**; it never applies one itself. The Voice page shows what would change
+  (bb's own diff view) with **Apply**, **Tweak** (edit the proposed text, then apply it) and **Reject**, and
+  the Voice entry in the sidebar shows a pencil (✎) while one waits; on bb's icon-only rail that is a dot,
+  with the reason in its tooltip. One edit waits at a time: a new one replaces it, and the page says so. An
+  applied edit takes effect from the next voice session; the one in progress keeps its instructions.
 - **Never merges, archives, deletes or publishes, and never changes settings,** by voice. There is no tool
-  for any of it; ask and it says to do it in bb.
+  for any of it (its instructions only through an edit you apply); ask and it says to do it in bb.
 
 ## What you need
 
@@ -126,9 +132,9 @@ Things to say:
 - **Instructions:** how the voice behaves, its greeting included. Change the greeting here: what it says,
   how many threads it names, whether it asks you something. Clear the field to go back to the default. Rules
   about questions, approvals and what is never done by voice are added after your text and cannot be
-  changed here.
+  changed here. An edit the voice proposed and you applied lands here too.
 - **Voice hooks** are not a setting: each machine runs its own file (below), and the settings page says
-  which machines have one.
+  which machines have one, with **Open the script** for each that does.
 
 ## Voice hooks
 
@@ -176,10 +182,15 @@ Delete the file, or make it not executable, and no hook runs there. There is non
   the greeting's `speaking-started` late: keep it quick, or do there what the greeting must not miss (such
   as pausing music). A new session's hooks wait for the last one's to finish. Whether the file
   is there is checked when a session starts; a file made during a session runs from the next one.
-- **Only you set it.** No setting, RPC or command in bb sets a hook, reads the file or shows what is in it:
-  bb's command line can do anything bb's app can, so a hook kept in bb could be changed by any agent with
-  access to `bb`. The settings page says only, for each of bb's machines, whether it has a hook file and
+- **Only you set it.** No setting, RPC or command of Voice Pilot sets a hook, reads the file or shows what is
+  in it: bb's command line can do anything bb's app can, so a hook kept in bb could be changed by any agent
+  with access to `bb`. The settings page says, for each of bb's machines, whether it has a hook file and
   whether it can run, and marks the machine you are on.
+- **Open the script** shows a machine's hook file in bb's own file panel, beside the Voice page (bb's
+  settings page has no file panel, so the button takes you there). bb reads it through its own access to
+  that machine; Voice Pilot passes only where the file is. In bb 0.50 that panel is bb's read-only preview,
+  not bb's File Editor: bb picks a file editor by the file's extension, and the hook file has none. Edit it
+  from the preview's **Open in editor**, where your bb has one, or on the machine.
 - **Where it runs:** on the machine whose **bb desktop app** is in the call, not on the machine running bb's
   server. The window finds its machine through the bb host daemon beside the desktop app, so the machine
   must be one of bb's machines. bb's **mobile app** and a **browser tab** run no hooks. macOS and Linux only.
@@ -213,6 +224,8 @@ your own bb can read it (no other plugin), and anything shaped like a credential
 - Questions from bb's own *Ask User Question* plugin and from a provider (Claude Code's own) can be
   answered; another plugin's form can only be named, and you answer it in bb.
 - One session at a time across your windows: a new Talk takes over.
+- **Open the script** opens the hook file read-only in bb 0.50 (above): bb's File Editor takes files by
+  their extension, and a plugin cannot hand it a file without one.
 - In a browser tab, the browser may block a link the voice opens, as it blocks pop-ups that no tap started;
   the card then still says it opened it. A headless check opened them; bb's desktop app and mobile app have
   not been checked yet.

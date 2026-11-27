@@ -4,11 +4,15 @@
  * you said and what the voice said, tool calls, questions answered and hooks run. It works the same on a phone,
  * where it is the easiest way in: the thread header folds its Talk button into a menu there.
  */
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { useEffect, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { voice, type VoiceState } from "./controller";
 import { DebugLogView } from "./debug";
+import { hookOpen, hookOpenFailed } from "./hook-file";
+import { PromptEditCard } from "./prompt-edit";
 import { PAUSED_NOTE, statusText, useVoiceState } from "./overlay";
 
 /** The words under the buttons, for a state. */
@@ -29,11 +33,24 @@ function dotClass(state: VoiceState): string {
   return state.muted ? "bg-muted-foreground" : "bg-success";
 }
 
+/** Opens a hook script the settings page asked for, in this page's file panel. Renders nothing. */
+export function HookFileOpener() {
+  const navigate = useBbNavigate();
+  const wanted = useSyncExternalStore(hookOpen.subscribe, () => hookOpen.wanted);
+  useEffect(() => {
+    if (wanted === null) return;
+    const taken = hookOpen.take();
+    if (taken !== null && !navigate.experimental_openFilePreview({ target: taken.target, location: null })) toast.info(hookOpenFailed(taken));
+  }, [wanted, navigate]);
+  return null;
+}
+
 export function VoicePage() {
   const state = useVoiceState();
   const active = state.phase !== "idle" && state.phase !== "ending";
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <HookFileOpener />
       <section className="flex flex-col gap-3 border-b border-border px-4 py-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
@@ -63,6 +80,7 @@ export function VoicePage() {
         </div>
         <p className="m-0 text-sm text-muted-foreground">{pageNote(state)}</p>
       </section>
+      <PromptEditCard />
       <div className="min-h-0 flex-1">
         <DebugLogView active />
       </div>

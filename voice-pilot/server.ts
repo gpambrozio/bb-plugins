@@ -12,20 +12,24 @@ import { sdkBb } from "./server/bb-port";
 import { CONNECTIONS, CREDENTIAL_PLUGIN, callToken } from "./server/credentials";
 import { DebugPageSchema } from "./server/debug-log";
 import { HOOK_CALL_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, machineHookStatuses } from "./server/hooks";
-import { DEFAULT_INSTRUCTIONS } from "./server/instructions";
+import { DEFAULT_INSTRUCTIONS, ownInstructions } from "./server/instructions";
 import { openAiRealtime } from "./server/openai-port";
-import { sessionHandlers } from "./server/rpc";
+import { PromptEdits } from "./server/prompt-edits";
+import { promptHandlers, sessionHandlers } from "./server/rpc";
 import { systemClock } from "./server/ports";
 import { VoiceSessions, type AnnounceLevel, type Eagerness, type SessionSignal } from "./server/session";
 import { SESSION_CHANNEL } from "./shared/channel";
 import { HookFileStatusSchema, type HookEvent } from "./shared/hooks";
 import { hostContract } from "./shared/host-contract";
+import { PROMPT_EDIT_TAG, promptContract } from "./shared/prompt-edit";
 
 const Sdp = z.string().min(10).max(20_000);
 const HostId = z.string().min(1).max(200);
 const ThreadId = z.string().min(1).max(200).nullable();
 
 export const rpcContract = defineRpcContract({
+  /** The voice's staged edit of its own instructions: read, apply (as staged or tweaked), reject. App only. */
+  ...promptContract,
   /** `hostId` and `client`: the window's machine and bb client, for where the voice hooks run; `threadId`: the thread on its screen. */
   "session.start": {
     input: z.object({
@@ -151,6 +155,20 @@ export default async function plugin(bb: BbPluginApi) {
     callCodexRealtime: (signal?: AbortSignal) =>
       bb.sdk.plugins.callRpc({ pluginId: CREDENTIAL_PLUGIN, method: "realtimeConnection", input: {}, outputSchema: z.unknown(), signal }),
   };
+  // The voice's edits of its own instructions wait here for the owner; applying one writes the setting,
+  // which each session reads as it starts.
+  const prompts = new PromptEdits({
+    kv: bb.storage.kv,
+    instructions: {
+      get: async () => ownInstructions((await settings.get()).instructions),
+      set: async (text) => {
+        await settings.experimental_set({ instructions: text });
+      },
+    },
+    clock: systemClock,
+    log: bb.log,
+    changed: () => void bb.rpc.experimental_invalidate([PROMPT_EDIT_TAG]),
+  });
   const sessions = new VoiceSessions(
     {
       realtime: openAiRealtime({ token: (signal) => callToken(credentials, signal), log: bb.log }),
@@ -159,6 +177,7 @@ export default async function plugin(bb: BbPluginApi) {
       log: bb.log,
       publish: (signal: SessionSignal) => bb.realtime.publish(SESSION_CHANNEL, signal),
       hooks,
+      stageInstructions: (request) => prompts.stage(request),
     },
     async () => {
       const current = await settings.get();
@@ -176,7 +195,10 @@ export default async function plugin(bb: BbPluginApi) {
 
   const activeHosts = async () =>
     (await bb.sdk.hosts.list()).filter((host) => (host.lifecycle?.phase ?? "active") === "active").map(({ id, name }) => ({ id, name }));
-  bb.rpc.register(rpcContract, sessionHandlers(sessions, { hosts: activeHosts, statuses: (hosts) => machineHookStatuses(hosts, hookHost, systemClock) }));
+  bb.rpc.register(rpcContract, {
+    ...sessionHandlers(sessions, { hosts: activeHosts, statuses: (hosts) => machineHookStatuses(hosts, hookHost, systemClock) }),
+    ...promptHandlers(prompts),
+  });
 
   bb.events.on("interaction.pending", ({ thread, interaction }) => {
     if (!hidden(thread)) sessions.news("waiting", thread.id, interaction.id);

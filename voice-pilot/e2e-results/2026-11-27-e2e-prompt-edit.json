@@ -1,0 +1,3754 @@
+{
+  "startedAt": "2026-11-27T22:32:59.750Z",
+  "connectedMs": 1367,
+  "greetingFirstWordsMs": 2085,
+  "greeting": [
+    "Hi there. Nothing is running right now, and nothing is waiting on you. I’m listening."
+  ],
+  "greetingSpokenMs": 6839,
+  "promptEdit": {
+    "before": {
+      "staged": null,
+      "settingHadSkipper": false
+    },
+    "first": {
+      "summary": "Call the user “Captain” from now on.",
+      "said": [
+        "Got it, Captain—let me set that up so future sessions remember.",
+        "It’s staged on the Voice page for you to review. If you apply it there, it’ll take effect in the next voice session. For this session, I’ll keep using the current instructions."
+      ]
+    },
+    "second": {
+      "summary": "Call the user “Skipper” from now on.",
+      "replaced": {
+        "summary": "Call the user “Captain” from now on.",
+        "stagedAt": 1795818803316
+      },
+      "said": [
+        "Got it, I’ll update the staged change to use “Skipper” instead.",
+        "Done—the staged change now says “Skipper” and replaces the previous one. You’ll need to apply it on the Voice page, and it takes effect next session."
+      ]
+    },
+    "settingUntouchedWhileStaged": true,
+    "card": {
+      "replacedNote": 1,
+      "pencil": 0
+    },
+    "tweakApplied": {
+      "staged": null,
+      "hasCommodore": true,
+      "hasSkipper": false
+    },
+    "sessionOneStandingHadCommodore": false,
+    "goodbyeOne": [],
+    "secondGreeting": [
+      "Hi Commodore. There are no running threads and nothing waiting on you right now."
+    ],
+    "secondGreetingSaysCommodore": true,
+    "sessionTwoStandingHasCommodore": true,
+    "third": {
+      "summary": "Répondre uniquement en français à partir de la prochaine session.",
+      "said": [
+        "D’accord, je prépare une modification à proposer pour vos instructions.",
+        "Commodore, it’s staged on the Voice page for you to review. If you apply it, it will take effect in the next session. For now, I keep the current instructions."
+      ]
+    },
+    "afterReject": {
+      "staged": null,
+      "unchanged": true,
+      "french": false
+    }
+  },
+  "goodbye": [
+    "D’accord, je termine la session maintenant."
+  ],
+  "endedMs": 109334,
+  "events": [
+    {
+      "t": 1795818782807,
+      "type": "session.created"
+    },
+    {
+      "t": 1795818782877,
+      "type": "session.updated"
+    },
+    {
+      "t": 1795818782948,
+      "type": "session.updated"
+    },
+    {
+      "t": 1795818782948,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818782948,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818782948,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818783338,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818783339,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818783353,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818783354,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783360,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783368,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783564,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818783566,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783568,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783568,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783728,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783730,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783733,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783841,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783848,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783857,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783875,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783883,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783887,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783888,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783906,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783913,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783922,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818783925,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818784394,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818784395,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Hi there. Nothing is running right now, and nothing is waiting on you. I’m listening."
+    },
+    {
+      "t": 1795818784395,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818784395,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818784396,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818784400,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818784428,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818788318,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818792506,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818795157,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818795162,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818795162,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818795162,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818795285,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795288,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795292,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795295,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795299,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795304,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795307,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795311,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795315,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795320,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795324,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795327,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818795351,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818795611,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "From now on, I'd like you to call me Captain."
+    },
+    {
+      "t": 1795818799703,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818799705,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818799705,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818799706,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818799838,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799841,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799844,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799848,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799852,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799856,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799860,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799865,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799868,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818799919,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Please change your instructions so you always do."
+    },
+    {
+      "t": 1795818800002,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818800443,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818800443,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818800458,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818800459,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800467,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800476,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800642,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818800647,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800649,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800649,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800798,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800802,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800953,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800961,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800970,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800977,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818800985,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818801004,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818801010,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818801769,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818801770,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818801770,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801787,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801788,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801803,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801812,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801822,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801823,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801838,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801844,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801851,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801860,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801866,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801866,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801884,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801889,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801890,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801904,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801904,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801921,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801922,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801938,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801945,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801955,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801961,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801969,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801976,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801984,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801993,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818801999,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802007,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802014,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802023,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802029,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802038,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802045,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802052,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802061,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802067,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802078,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802084,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802090,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802099,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802105,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802113,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802123,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802129,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802135,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802146,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802153,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802159,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802169,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802175,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802183,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802191,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802198,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802206,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802215,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802222,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802228,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802262,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802277,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802286,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802288,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802290,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802290,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802293,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802296,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802298,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802307,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802314,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802320,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802328,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802337,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802344,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802351,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802356,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802358,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802375,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802383,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802389,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802398,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802404,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802413,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802420,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802426,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802440,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802443,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802448,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802449,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802465,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802471,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802472,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802489,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802497,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802504,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802512,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802521,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802524,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802525,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802543,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802550,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802558,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802566,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802574,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802582,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802588,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802595,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802603,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802613,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802618,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802627,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802633,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802641,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802648,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802656,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802664,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802671,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802680,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802684,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802685,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802703,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802710,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802718,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802726,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802733,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802741,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802750,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802757,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802765,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802770,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802779,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802785,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802794,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802800,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802808,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802816,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802823,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802831,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802839,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802846,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802854,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802868,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802878,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802879,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802887,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802892,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802923,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802933,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802967,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818802992,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803002,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803010,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803020,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803029,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803038,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803045,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803051,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803060,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803068,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803077,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803082,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803083,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803102,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803108,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803118,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803125,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803136,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803142,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803150,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803164,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803174,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803178,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803182,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803184,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803201,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803207,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803207,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803226,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803234,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803266,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803267,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803288,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818803317,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818803317,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Got it, Captain—let me set that up so future sessions remember."
+    },
+    {
+      "t": 1795818803317,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818803323,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818803323,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818803323,
+      "type": "response.function_call_arguments.done",
+      "name": "propose_instructions_edit"
+    },
+    {
+      "t": 1795818803323,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818803323,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818803324,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818803364,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818803421,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818803421,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818803440,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818803874,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818803875,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818803892,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818803892,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818803898,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818803906,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804119,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804122,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804125,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804128,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804296,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804298,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804366,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804373,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804382,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804390,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804397,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804415,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804424,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804431,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804434,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804694,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804697,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804705,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804713,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804721,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804729,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804735,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804746,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804751,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818804755,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805134,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805140,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805147,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805154,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805161,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805170,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805177,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805183,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805398,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818805644,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805653,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805659,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818805665,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818806070,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818806070,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "It’s staged on the Voice page for you to review. If you apply it there, it’ll take effect in the next voice session. For this session, I’ll keep using the current instructions."
+    },
+    {
+      "t": 1795818806072,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818806072,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818806073,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818806075,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818806111,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818815658,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818819485,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818827124,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818827128,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818827128,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818827129,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818827244,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827247,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827251,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827255,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827261,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827264,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827267,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827271,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827275,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827279,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827283,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827287,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827291,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827295,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818827356,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Actually, make that Skipper instead of Captain, from now on."
+    },
+    {
+      "t": 1795818827431,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818827881,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818827882,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818827897,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818827897,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818827904,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818827914,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828070,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818828076,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828076,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828078,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828229,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828232,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828239,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828385,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828393,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828402,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828412,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828430,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828438,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828447,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828453,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818828913,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818828913,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818828913,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828926,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828926,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828946,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828954,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828956,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828957,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828975,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828984,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828989,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818828999,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829005,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829010,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829011,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829028,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829033,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829034,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829050,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829050,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829066,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829066,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829083,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829091,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829098,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829107,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829114,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829121,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829131,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829140,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829144,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829153,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829160,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829170,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829176,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829183,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829190,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829199,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829205,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829214,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829221,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829225,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829226,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829244,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829254,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829259,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829268,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829274,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829283,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829301,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829324,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829333,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829334,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829336,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829337,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829338,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829343,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829353,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829358,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829367,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829374,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829384,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829390,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829400,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829405,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829414,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829424,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829428,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829438,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829444,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829451,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829460,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829467,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829474,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829482,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829491,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829496,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829506,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829513,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829521,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829528,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829536,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829543,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829552,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829556,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829570,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829575,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829583,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829590,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829598,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829605,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829616,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829622,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829629,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829635,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829641,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829642,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829660,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829664,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829665,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829683,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829690,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829698,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829706,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829713,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829720,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829721,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829736,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829749,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829752,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829759,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829767,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829775,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829783,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829789,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829798,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829805,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829813,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829821,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829830,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829837,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829843,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829851,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829858,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829867,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829874,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829879,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829880,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829897,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829906,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829913,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829921,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829929,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829936,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829945,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829956,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829960,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829969,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829975,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829982,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829990,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818829999,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830006,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830013,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830020,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830030,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830035,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830043,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830051,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830059,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830067,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830075,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830082,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830091,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830099,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830106,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830115,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830125,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830136,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830145,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830151,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830158,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830166,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830174,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830183,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830189,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830196,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830204,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830213,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830219,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830220,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830237,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830243,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830252,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830259,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830266,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830275,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830282,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830290,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830325,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830328,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830329,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830330,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830332,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830333,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830334,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830350,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830359,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830364,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830365,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830370,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818830405,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818830405,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Got it, I’ll update the staged change to use “Skipper” instead."
+    },
+    {
+      "t": 1795818830405,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818830407,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818830408,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818830409,
+      "type": "response.function_call_arguments.done",
+      "name": "propose_instructions_edit"
+    },
+    {
+      "t": 1795818830410,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818830410,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818830412,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818830452,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818830481,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818830481,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818830542,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818831587,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818831587,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818831588,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831601,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831602,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831620,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831631,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831634,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831634,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831652,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831659,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831666,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831674,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831681,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831686,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831686,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831706,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831709,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831710,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831725,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831725,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831743,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831753,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831759,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831767,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831771,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831772,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831789,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831798,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831802,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831803,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831810,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831818,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818831852,
+      "type": "response.function_call_arguments.done",
+      "name": "propose_instructions_edit"
+    },
+    {
+      "t": 1795818831855,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818831855,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818831858,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818831893,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818831924,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818831924,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818831976,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818832058,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818832332,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818832333,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818832341,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818832341,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832350,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832516,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818832519,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832519,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832669,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832671,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832816,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832823,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832834,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832845,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832848,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832857,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832866,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818832874,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833154,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833155,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833173,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833182,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833192,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833199,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833207,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833215,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833223,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833233,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833241,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833246,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833247,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833650,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833657,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833666,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833674,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833683,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833692,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818833699,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818834181,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818834182,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Done—the staged change now says “Skipper” and replaces the previous one. You’ll need to apply it on the Voice page, and it takes effect next session."
+    },
+    {
+      "t": 1795818834183,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818834184,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818834184,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818834186,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818834221,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818841059,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818844924,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818846420,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818846428,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818846428,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818846428,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818846552,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818846557,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818846562,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818846563,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818846567,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818846631,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "That's all. Goodbye."
+    },
+    {
+      "t": 1795818846713,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818847138,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818847138,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818847139,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818847253,
+      "type": "response.function_call_arguments.done",
+      "name": "end_session"
+    },
+    {
+      "t": 1795818847253,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818847255,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818847256,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818847284,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818847327,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818847329,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818851333,
+      "type": "session.created"
+    },
+    {
+      "t": 1795818851418,
+      "type": "session.updated"
+    },
+    {
+      "t": 1795818851493,
+      "type": "session.updated"
+    },
+    {
+      "t": 1795818851493,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818851493,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818851493,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818851755,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818851755,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818851772,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818851772,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851778,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851786,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851794,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851952,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818851958,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851959,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818851959,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852103,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852104,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852235,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852243,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852250,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852269,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852276,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852285,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852291,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852296,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818852702,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818852704,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Hi Commodore. There are no running threads and nothing waiting on you right now."
+    },
+    {
+      "t": 1795818852704,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818852705,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818852706,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818852708,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818852732,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818856212,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818859555,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818867436,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818867442,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818867442,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818867442,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818867570,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867572,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867576,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867581,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867585,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867589,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867592,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867597,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867602,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867607,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867632,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867636,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867640,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867644,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867645,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867672,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867675,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867679,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818867680,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818868097,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "À partir de maintenant, répondez uniquement en français. Changez vos instructions pour cela."
+    },
+    {
+      "t": 1795818868186,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818868634,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818868635,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818868649,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818868650,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868657,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868665,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868825,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818868827,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868831,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868839,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818868995,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869000,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869150,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869158,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869167,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869175,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818869182,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818870170,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818870172,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818870172,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870189,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870190,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870209,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870215,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870224,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870234,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870241,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870249,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870258,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870268,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870276,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870287,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870294,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870304,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870312,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870318,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870328,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870328,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870344,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870345,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870366,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870372,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870372,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870392,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870399,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870406,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870416,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870423,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870430,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870438,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870449,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870453,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870453,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870460,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818870504,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818870504,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "D’accord, je prépare une modification à proposer pour vos instructions."
+    },
+    {
+      "t": 1795818870504,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818870505,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818870506,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818870506,
+      "type": "response.function_call_arguments.done",
+      "name": "propose_instructions_edit"
+    },
+    {
+      "t": 1795818870506,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818870507,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818870509,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818870541,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818870579,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818870579,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818870637,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818870992,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818870993,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818871007,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818871008,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871016,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871025,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871033,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871197,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871201,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871215,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871218,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871375,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871381,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871388,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871396,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871545,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871554,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871573,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871583,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871588,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871597,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871607,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871612,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871612,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871888,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871899,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871903,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871910,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871918,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871928,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871935,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871938,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871948,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818871951,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872325,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872332,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872339,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872347,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872354,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872361,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872371,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872374,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818872910,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818872910,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Commodore, it’s staged on the Voice page for you to review. If you apply it, it will take effect in the next session. For now, I keep the current instructions."
+    },
+    {
+      "t": 1795818872911,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818872911,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818872912,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818872915,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818872969,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818881732,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1795818884774,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1795818886403,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1795818886409,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1795818886409,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818886409,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818886525,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818886529,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818886532,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818886535,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818886540,
+      "type": "conversation.item.input_audio_transcription.delta"
+    },
+    {
+      "t": 1795818886612,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "That's all. Goodbye."
+    },
+    {
+      "t": 1795818886686,
+      "type": "response.created"
+    },
+    {
+      "t": 1795818887151,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818887151,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818887168,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1795818887168,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887176,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887184,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887640,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1795818887647,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887650,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887687,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887689,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887692,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887695,
+      "type": "response.output_audio_transcript.delta"
+    },
+    {
+      "t": 1795818887896,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1795818887896,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818887897,
+      "type": "response.function_call_arguments.delta"
+    },
+    {
+      "t": 1795818887931,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1795818887932,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "D’accord, je termine la session maintenant."
+    },
+    {
+      "t": 1795818887933,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1795818887934,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818887934,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818887936,
+      "type": "response.function_call_arguments.done",
+      "name": "end_session"
+    },
+    {
+      "t": 1795818887936,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818887937,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1795818887940,
+      "type": "response.done"
+    },
+    {
+      "t": 1795818887967,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1795818888007,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1795818888007,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1795818890492,
+      "type": "output_audio_buffer.stopped"
+    }
+  ],
+  "video": null
+}

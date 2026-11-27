@@ -40,15 +40,16 @@ describe.runIf(posix)("running a machine's voice hook", () => {
 
   it("says whether the file is there and runnable, and nothing of what is in it", async () => {
     const home = scratch();
-    await expect(hookStatus(hookPath(home))).resolves.toEqual({ present: false, executable: false });
+    const file = hookPath(home);
+    await expect(hookStatus(file)).resolves.toEqual({ present: false, executable: false, path: file });
     hookFile("echo secret", { home, executable: false });
-    await expect(hookStatus(hookPath(home))).resolves.toEqual({ present: true, executable: false });
-    chmodSync(hookPath(home), 0o755);
-    await expect(hookStatus(hookPath(home))).resolves.toEqual({ present: true, executable: true });
+    await expect(hookStatus(file)).resolves.toEqual({ present: true, executable: false, path: file });
+    chmodSync(file, 0o755);
+    await expect(hookStatus(file)).resolves.toEqual({ present: true, executable: true, path: file });
     // A folder at the path is not a hook.
     const other = scratch();
     mkdirSync(hookPath(other), { recursive: true });
-    await expect(hookStatus(hookPath(other))).resolves.toEqual({ present: false, executable: false });
+    await expect(hookStatus(hookPath(other))).resolves.toMatchObject({ present: false, executable: false });
   });
 
   it("runs nothing, and answers null, when there is no hook file", async () => {
@@ -127,10 +128,11 @@ describe.runIf(posix)("running a machine's voice hook", () => {
     const harness = experimental_createHostEntryHarness(hostEntry);
     let slow: Promise<unknown> = Promise.resolve();
     try {
-      await expect(harness.experimental_call("status", {})).resolves.toEqual({ present: false, executable: false });
+      // The status says where the file is (for bb's own file panel), never what is in it.
+      await expect(harness.experimental_call("status", {})).resolves.toEqual({ present: false, executable: false, path: join(home, ".config", "voice-pilot", "hook") });
       await expect(harness.experimental_call("run", { event: "listening-started", reason: null })).resolves.toBeNull();
       hookFile(`echo "$VOICE_PILOT_HOOK" >> '${out}'; if [ "$VOICE_PILOT_HOOK" = speaking-started ]; then (sleep 0.4; touch '${marker}') & sleep 30; fi`, { home });
-      await expect(harness.experimental_call("status", {})).resolves.toEqual({ present: true, executable: true });
+      await expect(harness.experimental_call("status", {})).resolves.toEqual({ present: true, executable: true, path: join(home, ".config", "voice-pilot", "hook") });
       await expect(harness.experimental_call("run", { event: "listening-started", reason: null })).resolves.toMatchObject({ exitCode: 0 });
       expect(readFileSync(out, "utf8")).toBe("listening-started\n");
       // No call can name a command or a path: the contract refuses one.

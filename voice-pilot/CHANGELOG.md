@@ -21,10 +21,14 @@
 - On a phone, switching away from bb pauses the session instead of ending it. Come back to bb and the voice
   says it is back and carries on where you left off, then tells you what happened meanwhile; the card says
   Paused with Resume and End until then. A pause of half an hour ends the session.
+- Ask the voice to change how it behaves from now on ("call me Sam") and it proposes an edit of its own
+  instructions instead of changing them: the Voice page shows what would change, and you apply it, tweak it
+  first, or reject it. A pencil on the Voice entry in the sidebar says one is waiting. One waits at a time; a
+  newer proposal replaces it and the page says so. An applied edit takes effect from the next voice session.
 - Say "mute" and the voice mutes your microphone, as the Mute button does, without ending the session; it
   tells you to tap Unmute to talk again, and the card says so too.
 - Runs on an OpenAI API key or on your ChatGPT subscription through the codex-realtime plugin.
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
-  talk.
+  talk. The settings list which machines have one, with a button that opens the script in bb's file panel.
 - The Voice page shows the session's state and its log: what you said, what the voice said, what it did.
   The log's Settings button opens Voice Pilot's settings.

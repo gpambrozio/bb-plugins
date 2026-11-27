@@ -15,14 +15,18 @@
  *   options (by number or label) or your own words since it was read (`questions.ts`).
  * - **Approvals** take two steps: `decide_request` reads back what would be sent, and `confirm_decision`
  *   sends it only when your transcript since that read-back is a plain yes (`policy.ts`, `saidYes`).
+ * - **Its own instructions** (`propose_instructions_edit`) are never changed by voice: an edit is staged for the
+ *   owner, who applies, tweaks or rejects it on the Voice page; an applied one reaches the next session only.
  * - There is no tool to merge, archive, delete, rename or change a setting, so none can happen by voice.
  *
  * Every result is short enough to speak, and capped by the session at 4,000 characters.
  */
 import type { BbPort, ThreadInfo } from "./bb-port";
 import { linkLabel, linkTarget, type LinkTarget } from "./links";
+import { PromptChangeSchema, SUMMARY_MAX } from "../shared/prompt-edit";
 import type { DebugLog } from "./debug-log";
 import { RateLimit, SendGate, saidYes } from "./policy";
+import type { StageRequest, StageResult } from "./prompt-edits";
 import { errorText, type Clock } from "./ports";
 import { LinkList, linksIn, parts, readableReply } from "./rich";
 import { DECISION_WORDS, buildAnswers, parsePending, readAloud, spoken, type Decision, type Pending, type Pick } from "./questions";
@@ -170,6 +174,33 @@ export const TOOLS: readonly ToolSpec[] = [
       "Mutes the user's microphone, when they ask you to mute (\"mute\", \"mute yourself\", \"mute the mic\"). The session goes on: you can still speak, and they unmute by tapping Unmute. Never ends the session.",
     parameters: NONE,
   },
+  {
+    name: "propose_instructions_edit",
+    description:
+      "Proposes an edit of your own instructions, when the user asks you to behave differently from now on (\"from now on, call me Sam\", \"keep the greeting shorter\"). It is never applied by you: it is staged for the user to review on the Voice page, where they apply it, tweak it or reject it, and it takes effect from the next voice session, never this one. Only the part before the rules can change (the rules about questions, approvals and what is never done by voice cannot). Give either changes (each find quoted exactly from your instructions, occurring once; an empty find appends) or the whole new text. One edit waits at a time: a new one replaces it.",
+    parameters: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "What the edit changes, in one short line the user will read." },
+        changes: {
+          type: "array",
+          description: "The changes, in order. Prefer this to text.",
+          items: {
+            type: "object",
+            properties: {
+              find: { type: "string", description: "Text quoted exactly from your instructions, occurring once; empty to append." },
+              replace: { type: "string", description: "What it becomes." },
+            },
+            required: ["find", "replace"],
+            additionalProperties: false,
+          },
+        },
+        text: { type: "string", description: "The whole new instructions, only for a rewrite." },
+      },
+      required: ["summary"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /** The tools as the Realtime session takes them. */
@@ -195,6 +226,8 @@ export interface ToolDeps {
   end(): void;
   /** Mutes the microphone of the window holding the call, as its Mute button does. */
   mute?(): void;
+  /** Stages an edit of the instructions for the owner's review; never applies it. */
+  stageInstructions?(request: StageRequest): Promise<StageResult>;
   /** A message went to this thread, or it was started: its finished turn is news. */
   sent?(threadId: string): void;
   /**
@@ -353,8 +386,33 @@ export class VoiceTools {
           muted: true,
           note: "The microphone is muted now, and the session goes on: the user cannot be heard until they tap Unmute on the Voice Pilot card or the Voice page. Say so in one short sentence; they cannot unmute by voice.",
         };
+      case "propose_instructions_edit":
+        return this.proposeInstructionsEdit(args);
       default:
         return fail(`There is no tool ${name}.`);
+    }
+  }
+
+  private async proposeInstructionsEdit(args: Record<string, unknown>): Promise<Result> {
+    if (this.deps.stageInstructions === undefined) return fail("Instructions edits cannot be proposed from here.");
+    const summary = str(args.summary).slice(0, SUMMARY_MAX);
+    const changes = args.changes === undefined ? undefined : PromptChangeSchema.array().max(20).safeParse(args.changes);
+    const text = typeof args.text === "string" ? args.text : undefined;
+    if (changes !== undefined && !changes.success) return fail("Each change needs a find and a replace, both text.");
+    if ((changes === undefined) === (text === undefined)) return fail("Give either changes or the whole new text, not both and not neither.");
+    try {
+      const { staged, replaced } = await this.deps.stageInstructions(
+        changes !== undefined && changes.success ? { summary, changes: changes.data } : { summary, text: text ?? "" },
+      );
+      this.deps.debug.add("session", `Staged an instructions edit for review: ${staged.summary}${replaced === null ? "" : ` (it replaced "${replaced.summary}")`}`, staged.proposed);
+      return {
+        ok: true,
+        staged: true,
+        ...(replaced === null ? {} : { replaced_edit: replaced.summary }),
+        note: `The edit is staged, not applied: the user reviews it on the Voice page (a pencil on its sidebar entry), where they apply it, tweak it or reject it, and it takes effect from the next voice session, not this one.${replaced === null ? "" : " It replaced the edit that was waiting; say so."} Say this in one or two short sentences, and keep to your current instructions for the rest of this session.`,
+      };
+    } catch (error) {
+      return fail(errorText(error));
     }
   }
 

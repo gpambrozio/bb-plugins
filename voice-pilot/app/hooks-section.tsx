@@ -1,9 +1,10 @@
 /**
  * The voice hooks in the plugin's settings: every machine bb knows, whether it has a hook file, and which
- * machine this window runs on. Nothing here sets or shows a command: each machine runs its own
+ * machine this window runs on, with Open the script for a machine that has one (bb's own file panel, beside the
+ * Voice page: `app/hook-file.ts`). Nothing here sets or shows a command: each machine runs its own
  * `~/.config/voice-pilot/hook`, which the owner writes there (see the README).
  */
-import { useRpc, useSdk } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -11,10 +12,12 @@ import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import { HOOK_EVENT_ENV, HOOK_FILE_SHOWN, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookFileStatus } from "../shared/hooks";
 import { createLocalHostLookup } from "./machine";
+import { hookOpen, type HookFileTarget } from "./hook-file";
 import { settingsPage } from "./open-settings";
+import { VOICE_PAGE } from "./overlay";
 import { voicePlatform } from "./platform";
 
-interface MachineStatus {
+export interface MachineStatus {
   hostId: string;
   name: string;
   status: HookFileStatus | null;
@@ -30,6 +33,13 @@ export function hookFileText(status: HookFileStatus | null): string {
   if (!status.present) return `No hook file: nothing runs.`;
   if (!status.executable) return `Has ${HOOK_FILE_SHOWN}, but it is not executable (chmod +x), so it does not run.`;
   return `Has ${HOOK_FILE_SHOWN}: it runs.`;
+}
+
+/** bb's file target for a machine's hook file, when there is one to open; null otherwise. */
+export function hookFileTarget(machine: MachineStatus): HookFileTarget | null {
+  const status = machine.status;
+  if (status === null || !status.present || status.path === undefined) return null;
+  return { kind: "host", hostId: machine.hostId, path: status.path };
 }
 
 /** Where this window stands: whether it runs hooks, and on which machine. */
@@ -58,6 +68,13 @@ export function VoiceHooksSection() {
   const [error, setError] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
   const here = useThisMachine();
+  const navigate = useBbNavigate();
+  // bb's settings page has no file panel: the Voice page, a plugin page with one, opens it instead.
+  const openScript = (target: HookFileTarget, machine: string) => {
+    if (navigate.experimental_openFilePreview({ target, location: null })) return;
+    hookOpen.ask(target, machine);
+    navigate.toPluginPanel(VOICE_PAGE);
+  };
 
   // This section is drawn only on Voice Pilot's settings page: its mount tells the debug view's Settings button the page showed.
   useEffect(() => settingsPage.shown(), []);
@@ -103,6 +120,7 @@ export function VoiceHooksSection() {
                 {machine.hostId === here.hostId ? <span className="ml-2 text-xs font-normal text-muted-foreground">this machine</span> : null}
               </p>
               <p className="text-xs text-muted-foreground">{hookFileText(machine.status)}</p>
+              <HookFileOpen machine={machine} open={(target) => openScript(target, machine.name)} />
             </li>
           ))}
         </ul>
@@ -111,5 +129,21 @@ export function VoiceHooksSection() {
         Check again
       </Button>
     </section>
+  );
+}
+
+/**
+ * Opens a machine's hook script in bb's own file panel, through bb's file access on that machine: the plugin
+ * reads and stores nothing of it. bb 0.50.1 picks a plugin's file opener (its File Editor among them) by the
+ * file's extension, and the hook file has none, so it opens in bb's file preview, whose Open in editor takes it
+ * to the editor bb is set to use.
+ */
+function HookFileOpen({ machine, open }: { machine: MachineStatus; open: (target: HookFileTarget) => void }) {
+  const target = hookFileTarget(machine);
+  if (target === null) return null;
+  return (
+    <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => open(target)}>
+      Open the script
+    </Button>
   );
 }

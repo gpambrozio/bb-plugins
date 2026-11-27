@@ -6,8 +6,8 @@
  *
  * The command is never stored in bb nor set through it: bb names its app and its command line the same
  * caller, so anything a bb RPC or setting holds, an agent with `bb` could change. Only someone who can write
- * that file on that machine can choose what runs there. No RPC reads the file or shows what is in it; the
- * settings page says only whether it is there.
+ * that file on that machine can choose what runs there. No RPC of this plugin reads the file or shows what is
+ * in it; the settings page says whether it is there, and hands its path to bb's own file panel to open.
  *
  * Shared by the app, the server and the host entry, so it imports zod only, never the SDK.
  */
@@ -45,8 +45,11 @@ export const HOOK_FILE_SHOWN = `~/${HOOK_FILE}`;
 /** How long a run may take before it is stopped, with everything it started. */
 export const HOOK_TIMEOUT_MS = 5_000;
 
-/** Whether a machine has a hook file; never what is in it. */
-export const HookFileStatusSchema = z.object({ present: z.boolean(), executable: z.boolean() });
+/**
+ * Whether a machine has a hook file; never what is in it. `path` is where it is (or would be) on that machine,
+ * so the settings can hand it to bb's own file panel; a host entry older than 0.1.0's last change sends none.
+ */
+export const HookFileStatusSchema = z.object({ present: z.boolean(), executable: z.boolean(), path: z.string().min(1).max(1024).optional() });
 export type HookFileStatus = z.infer<typeof HookFileStatusSchema>;
 
 /** What the host entry reports of one run. Never its output: the hook's output is ignored. */

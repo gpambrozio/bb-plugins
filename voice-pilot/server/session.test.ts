@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { RULES } from "./instructions";
+import { RULES, ownInstructions } from "./instructions";
+import { PromptEdits } from "./prompt-edits";
 import { ALIVE_TIMEOUT_MS, GOODBYE_MS, IDLE_CHECK_MS, PAUSE_END_MS, VoiceSessions, WORDS_WAIT_MS, type AnnounceLevel, type SessionSignal } from "./session";
 import { FakeBb, FakeClock, FakeRealtime, quietLog, settle, thread, type FakeSideband } from "./testing/fakes";
 
@@ -466,5 +467,47 @@ describe("on the phone, a session leaving the screen", () => {
     expect(await sessions.pause(sessionId, "bb left the screen")).toBe(false);
     await clock.advance(ALIVE_TIMEOUT_MS + IDLE_CHECK_MS);
     expect(state(signals)).toEqual(["live", "ended"]);
+  });
+});
+
+describe("an edit of the voice's instructions", () => {
+  it("is staged by the voice's tool, and once applied reaches the next session, never the one in progress", async () => {
+    const realtime = new FakeRealtime();
+    const clock = new FakeClock();
+    const setting = { instructions: "Greet me like a ship's captain." };
+    const rows = new Map<string, unknown>();
+    const prompts = new PromptEdits({
+      kv: { get: async <T>(key: string) => rows.get(key) as T | undefined, set: async (key, value) => void rows.set(key, value), delete: async (key) => void rows.delete(key) },
+      instructions: { get: async () => ownInstructions(setting.instructions), set: async (text) => void (setting.instructions = text) },
+      clock,
+      log: quietLog(),
+      changed: () => undefined,
+    });
+    const config = async () => ({ model: "gpt-realtime-2.1", effort: "low", voice: "marin", eagerness: "auto" as const, instructions: setting.instructions, announce: "talked-to" as const });
+    const sessions = new VoiceSessions({ realtime, bb: new FakeBb(), clock, log: quietLog(), publish: () => undefined, stageInstructions: (request) => prompts.stage(request) }, config);
+    const { sessionId } = await sessions.start("v=0 offer");
+    const sideband = realtime.last;
+    sideband.open();
+    await settle();
+
+    await respond(sideband, { tool: { name: "propose_instructions_edit", args: { summary: "Call me Sam", changes: [{ find: "", replace: "Call the user Sam." }] } } });
+    const output = sideband.ofType("conversation.item.create").map((event) => (event as { item: { type: string; output?: string } }).item).find((item) => item.type === "function_call_output");
+    expect(JSON.parse(String(output?.output))).toMatchObject({ ok: true, staged: true });
+    // Staged, not applied: the setting is as it was.
+    expect(setting.instructions).toBe("Greet me like a ship's captain.");
+
+    const staged = await prompts.staged();
+    await prompts.apply(staged?.id ?? "");
+    expect(setting.instructions).toBe("Greet me like a ship's captain.\n\nCall the user Sam.");
+
+    // The session in progress keeps its instructions, its hourly renewal included.
+    const before = `Greet me like a ship's captain.\n\n${RULES}`;
+    await sessions.renew(sessionId, "v=0 renewal");
+    expect(realtime.calls.map((call) => call.session.instructions)).toEqual([before, before]);
+
+    // The next session starts with the applied edit.
+    await sessions.end(sessionId, "ended by the user");
+    await sessions.start("v=0 next");
+    expect(realtime.calls.at(-1)?.session.instructions).toBe(`Greet me like a ship's captain.\n\nCall the user Sam.\n\n${RULES}`);
   });
 });

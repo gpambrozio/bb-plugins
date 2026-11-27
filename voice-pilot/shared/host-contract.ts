@@ -1,7 +1,7 @@
 /**
  * The contract between the server and the host entry (`host.ts`), which runs on the machine whose bb desktop
  * app holds the call. Neither method takes a command or a path: the host runs only its own machine's hook
- * file (`HOOK_FILE`), and says of it only whether it is there.
+ * file (`HOOK_FILE`), and says of it only whether it is there and where (for bb's own file panel).
  */
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";

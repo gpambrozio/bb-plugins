@@ -12,8 +12,11 @@ one waiting on you, in a few seconds, then listens.
   and sends it only after you say yes.
 - Send a message to a thread's agent, start a thread in a project, stop a thread, or show one on screen.
 - Hear when a thread starts waiting on you, fails, or finishes after you messaged it, with what its agent did.
+- Tell it how to behave from now on ("call me Sam"): it proposes an edit of its own instructions, and the
+  Voice page shows the change for you to apply, tweak or reject. It takes effect from the next session.
 
 Nothing is merged, archived, deleted or published by voice, and no setting changes: there is no tool for it.
+Its instructions change only through an edit you apply.
 
 ## Where
 
@@ -25,7 +28,8 @@ phone; switch away from bb on the phone and the session pauses, then picks up wh
 ## Voice hooks
 
 A script you write on each machine, run as listening starts and stops, as the voice speaks and as you talk:
-pause your music, mute Herald, dim a light. Nothing in bb sets or shows it.
+pause your music, mute Herald, dim a light. Nothing in bb sets it; the settings say which machines have one
+and open it in bb's file panel.
 
 ## What it needs
 
