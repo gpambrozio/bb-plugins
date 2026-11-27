@@ -1,6 +1,6 @@
 /**
- * Runs this machine's voice hook: the executable file `HOOK_FILE` in the home folder, never a command from
- * anywhere else. Adapted from Herald's `host/run-hook.ts`: from the home folder, in a process group of its
+ * Runs this machine's voice hook: the first of `HOOK_NAMES` in `~/.config/voice-pilot/` (`hook`, then
+ * `hook.sh` and the others), never a command from anywhere else. Adapted from Herald's `host/run-hook.ts`: from the home folder, in a process group of its
  * own, and resolved on `exit`. Unlike Herald's, the whole group is killed as soon as the hook exits too, not
  * only at the time limit: a background process it started (`… &`) would otherwise outlive the limit, the
  * session and the worker. Its output is never read, and nothing here reads the file's contents.
@@ -11,7 +11,7 @@ import { access, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { BB_SERVER_URL_ENV, HOOK_EVENT_ENV, HOOK_FILE, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import { BB_SERVER_URL_ENV, HOOK_DIR, HOOK_EVENT_ENV, HOOK_FILE, HOOK_NAMES, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
 import { RelayFinder } from "./relay";
 
 /** This machine's hook file, in the home folder of the user the host daemon runs as. */
@@ -20,7 +20,7 @@ export function hookPath(home: string = homedir()): string {
 }
 
 /** Whether `file` is there (a file, or a link to one) and can be run, and where it is. Reads nothing of it. */
-export async function hookStatus(file: string = hookPath()): Promise<HookFileStatus> {
+export async function fileStatus(file: string): Promise<HookFileStatus> {
   try {
     if (!(await stat(file)).isFile()) return { present: false, executable: false, path: file };
   } catch {
@@ -34,8 +34,19 @@ export async function hookStatus(file: string = hookPath()): Promise<HookFileSta
   }
 }
 
+/**
+ * This machine's hook: the first of `HOOK_NAMES` that is a file in the hook folder, with the names of any
+ * others there (which do not run). With none, `present` is false and `path` is where `hook` would be.
+ */
+export async function hookStatus(home: string = homedir()): Promise<HookFileStatus> {
+  const found = (await Promise.all(HOOK_NAMES.map((name) => fileStatus(join(home, ...HOOK_DIR.split("/"), name))))).filter((status) => status.present);
+  const [hook, ...rest] = found;
+  if (hook === undefined) return { present: false, executable: false, path: hookPath(home) };
+  return rest.length === 0 ? hook : { ...hook, others: rest.map((status) => status.path?.split("/").at(-1) ?? "") };
+}
+
 export interface RunHookOptions {
-  /** Tests only; the host entry always runs `hookPath()`. */
+  /** The hook file; this machine's own (`hookStatus`) when absent. Tests name one. */
   file?: string;
   timeoutMs?: number;
   cwd?: string;
@@ -68,8 +79,9 @@ function guardExit(): void {
  * only the hook itself is stopped.
  */
 export async function runHook(event: HookEvent, reason: string | null, options: RunHookOptions = {}): Promise<HookRun | null> {
-  const file = options.file ?? hookPath();
-  if (!(await hookStatus(file)).present) return null;
+  const status = options.file === undefined ? await hookStatus() : await fileStatus(options.file);
+  if (!status.present || status.path === undefined) return null;
+  const file = status.path;
   const timeoutMs = options.timeoutMs ?? HOOK_TIMEOUT_MS;
   const started = Date.now();
   const ownGroup = process.platform !== "win32";
@@ -132,8 +144,9 @@ const relay = new RelayFinder();
  * the run says why.
  */
 export async function runMachineHook(event: HookEvent, reason: string | null, finder: RelayFinder = relay): Promise<HookRun | null> {
-  if (!(await hookStatus()).present) return null;
+  const hook = await hookStatus();
+  if (!hook.present || hook.path === undefined) return null;
   const found = await finder.forRun(event === "listening-started");
-  const run = await runHook(event, reason, { bbServerUrl: found.url });
+  const run = await runHook(event, reason, { file: hook.path, bbServerUrl: found.url });
   return run === null ? null : { ...run, relayNote: found.note };
 }

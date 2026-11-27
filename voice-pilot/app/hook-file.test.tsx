@@ -17,7 +17,7 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { info: vi.fn(), dismis
 
 type Rpc = PluginRpcTestHandlers<typeof rpcContract>;
 
-const PATH = "/Users/someone/.config/voice-pilot/hook";
+const PATH = "/Users/someone/.config/voice-pilot/hook.sh";
 
 function rpc(): Rpc {
   return {

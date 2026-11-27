@@ -261,7 +261,7 @@ describe("a session's hooks", () => {
 
   it("run nothing for a session whose machine has no hook file, one that is not executable, or one that does not answer", async () => {
     for (const [file, entry] of [
-      [{ present: false, executable: false }, "No hook this session: Studio, this window's machine, has no ~/.config/voice-pilot/hook"],
+      [{ present: false, executable: false }, "No hook this session: Studio, this window's machine, has no hook file in ~/.config/voice-pilot/"],
       [{ present: true, executable: false }, "No hook this session: ~/.config/voice-pilot/hook on Studio is not executable (chmod +x)"],
       ["silent", "No hook this session: Studio did not say whether it has a hook file"],
     ] as const) {

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import hostEntry from "../host";
+import { HOOK_NAMES } from "../shared/hooks";
 import { hookPath, hookStatus, killRunningHooks, runHook } from "./run-hook";
 
 const posix = process.platform !== "win32";
@@ -18,8 +19,8 @@ function scratch(): string {
 }
 
 /** Writes a hook script; executable unless asked otherwise. */
-function hookFile(body: string, options: { home?: string; executable?: boolean } = {}): string {
-  const file = hookPath(options.home ?? scratch());
+function hookFile(body: string, options: { home?: string; executable?: boolean; name?: string } = {}): string {
+  const file = join(dirname(hookPath(options.home ?? scratch())), options.name ?? "hook");
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `#!/bin/sh\n${body}\n`);
   chmodSync(file, options.executable === false ? 0o644 : 0o755);
@@ -41,15 +42,47 @@ describe.runIf(posix)("running a machine's voice hook", () => {
   it("says whether the file is there and runnable, and nothing of what is in it", async () => {
     const home = scratch();
     const file = hookPath(home);
-    await expect(hookStatus(file)).resolves.toEqual({ present: false, executable: false, path: file });
+    await expect(hookStatus(home)).resolves.toEqual({ present: false, executable: false, path: file });
     hookFile("echo secret", { home, executable: false });
-    await expect(hookStatus(file)).resolves.toEqual({ present: true, executable: false, path: file });
+    await expect(hookStatus(home)).resolves.toEqual({ present: true, executable: false, path: file });
     chmodSync(file, 0o755);
-    await expect(hookStatus(file)).resolves.toEqual({ present: true, executable: true, path: file });
+    await expect(hookStatus(home)).resolves.toEqual({ present: true, executable: true, path: file });
     // A folder at the path is not a hook.
     const other = scratch();
     mkdirSync(hookPath(other), { recursive: true });
-    await expect(hookStatus(hookPath(other))).resolves.toMatchObject({ present: false, executable: false });
+    await expect(hookStatus(other)).resolves.toMatchObject({ present: false, executable: false });
+  });
+
+  it("takes a hook file with an extension bb's File Editor opens, and keeps the extension-less one first", async () => {
+    const home = scratch();
+    const sh = hookFile("echo sh", { home, name: "hook.sh" });
+    await expect(hookStatus(home)).resolves.toEqual({ present: true, executable: true, path: sh });
+    // Several: the first in HOOK_NAMES runs, the others are named and do not.
+    hookFile("echo py", { home, name: "hook.py" });
+    await expect(hookStatus(home)).resolves.toEqual({ present: true, executable: true, path: sh, others: ["hook.py"] });
+    const plain = hookFile("echo plain", { home });
+    await expect(hookStatus(home)).resolves.toEqual({ present: true, executable: true, path: plain, others: ["hook.sh", "hook.py"] });
+    // A name outside the list is never a hook.
+    const lone = scratch();
+    hookFile("echo txt", { home: lone, name: "hook.txt" });
+    hookFile("echo backup", { home: lone, name: "hook.sh.bak" });
+    await expect(hookStatus(lone)).resolves.toMatchObject({ present: false });
+    expect(HOOK_NAMES[0]).toBe("hook");
+  });
+
+  it("runs a hook.sh through the host entry as it runs hook", async () => {
+    const home = scratch();
+    process.env.HOME = home;
+    const out = join(scratch(), "out");
+    hookFile(`echo "sh $VOICE_PILOT_HOOK" >> '${out}'`, { home, name: "hook.sh" });
+    const harness = experimental_createHostEntryHarness(hostEntry);
+    try {
+      await expect(harness.experimental_call("status", {})).resolves.toEqual({ present: true, executable: true, path: join(home, ".config", "voice-pilot", "hook.sh") });
+      await expect(harness.experimental_call("run", { event: "listening-started", reason: null })).resolves.toMatchObject({ exitCode: 0 });
+    } finally {
+      await harness.experimental_dispose();
+    }
+    expect(readFileSync(out, "utf8")).toBe("sh listening-started\n");
   });
 
   it("runs nothing, and answers null, when there is no hook file", async () => {

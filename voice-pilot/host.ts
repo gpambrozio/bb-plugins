@@ -2,7 +2,7 @@
 //
 // Runs on the machine whose bb desktop app holds the call, in a worker that machine's bb host daemon starts,
 // so the voice hook acts on that machine and not on the one running the bb server. It runs only this
-// machine's own hook file (`~/.config/voice-pilot/hook`, `host/run-hook.ts`); no call names a command or
+// machine's own hook file (`~/.config/voice-pilot/hook`, or `hook.sh` and the like: `host/run-hook.ts`); no call names a command or
 // a path, and none reads what is in the file. Before each run it looks for bb's relay on this machine, so the
 // hook's `bb` works on a machine joined through bb Connect (`host/relay.ts`, bb internals).
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";

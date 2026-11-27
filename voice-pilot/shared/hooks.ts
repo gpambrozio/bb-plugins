@@ -37,10 +37,26 @@ export const BB_SERVER_URL_ENV = "BB_SERVER_URL";
 /** The longest reason a run gives for having no `BB_SERVER_URL`. */
 export const RELAY_NOTE_MAX = 500;
 
-/** The hook file, relative to the home folder of the machine it runs on. */
-export const HOOK_FILE = ".config/voice-pilot/hook";
+/** The hook's folder, relative to the home folder of the machine it runs on. */
+export const HOOK_DIR = ".config/voice-pilot";
+/**
+ * The names a hook file may have, in the order they are looked for: the first one there is the hook, and only
+ * it runs. `hook` keeps its place first, so a machine set up before the others existed runs what it ran.
+ * The others carry an extension bb's File Editor opens (bb 0.50.1 picks its editor by extension), so the
+ * settings' Open the script edits them in bb; what runs them is still the file's own `#!` line.
+ */
+export const HOOK_NAMES = ["hook", "hook.sh", "hook.bash", "hook.zsh", "hook.fish", "hook.py", "hook.js", "hook.mjs", "hook.rb", "hook.pl"] as const;
+/** The extension-less hook file, relative to the home folder. */
+export const HOOK_FILE = `${HOOK_DIR}/hook`;
 /** How the settings and the docs name it. */
 export const HOOK_FILE_SHOWN = `~/${HOOK_FILE}`;
+/** How the settings and the docs name the folder. */
+export const HOOK_DIR_SHOWN = `~/${HOOK_DIR}/`;
+
+/** `~/.config/voice-pilot/<name>` for a hook file's path (or name). */
+export function hookShown(path: string): string {
+  return `${HOOK_DIR_SHOWN}${path.split("/").at(-1) ?? path}`;
+}
 
 /** How long a run may take before it is stopped, with everything it started. */
 export const HOOK_TIMEOUT_MS = 5_000;
@@ -49,7 +65,13 @@ export const HOOK_TIMEOUT_MS = 5_000;
  * Whether a machine has a hook file; never what is in it. `path` is where it is (or would be) on that machine,
  * so the settings can hand it to bb's own file panel; a host entry older than 0.1.0's last change sends none.
  */
-export const HookFileStatusSchema = z.object({ present: z.boolean(), executable: z.boolean(), path: z.string().min(1).max(1024).optional() });
+export const HookFileStatusSchema = z.object({
+  present: z.boolean(),
+  executable: z.boolean(),
+  path: z.string().min(1).max(1024).optional(),
+  /** The other hook files in the folder, by name: they do not run, since only the first one found does. */
+  others: z.array(z.string().max(32)).max(HOOK_NAMES.length).optional(),
+});
 export type HookFileStatus = z.infer<typeof HookFileStatusSchema>;
 
 /** What the host entry reports of one run. Never its output: the hook's output is ignored. */

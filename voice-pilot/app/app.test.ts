@@ -122,6 +122,14 @@ describe("the voice hooks' settings", () => {
     const { hookFileText } = await import("./hooks-section");
     expect(hookFileText({ present: true, executable: true })).toBe("Has ~/.config/voice-pilot/hook: it runs.");
     expect(hookFileText({ present: true, executable: false })).toMatch(/not executable \(chmod \+x\)/u);
+    // A hook file with an extension is named as it is, and the ones that do not run are named too.
+    expect(hookFileText({ present: true, executable: true, path: "/Users/someone/.config/voice-pilot/hook.sh" })).toBe("Has ~/.config/voice-pilot/hook.sh: it runs.");
+    expect(hookFileText({ present: true, executable: true, path: "/Users/someone/.config/voice-pilot/hook", others: ["hook.sh"] })).toBe(
+      "Has ~/.config/voice-pilot/hook: it runs. hook.sh is there too, and does not run: only the first hook file found runs.",
+    );
+    expect(hookFileText({ present: true, executable: false, path: "/h/.config/voice-pilot/hook.py", others: ["hook.js", "hook.rb"] })).toMatch(
+      /^Has ~\/\.config\/voice-pilot\/hook\.py, but it is not executable .* hook\.js, hook\.rb are there too, and do not run/u,
+    );
     expect(hookFileText({ present: false, executable: false })).toBe("No hook file: nothing runs.");
     expect(hookFileText(null)).toMatch(/Did not answer/u);
   });

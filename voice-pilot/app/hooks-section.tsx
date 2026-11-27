@@ -2,7 +2,8 @@
  * The voice hooks in the plugin's settings: every machine bb knows, whether it has a hook file, and which
  * machine this window runs on, with Open the script for a machine that has one (bb's own file panel, beside the
  * Voice page: `app/hook-file.ts`). Nothing here sets or shows a command: each machine runs its own
- * `~/.config/voice-pilot/hook`, which the owner writes there (see the README).
+ * hook file in `~/.config/voice-pilot/` (`hook`, or `hook.sh` and the like), which the owner writes there
+ * (see the README).
  */
 import { useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
@@ -10,7 +11,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 import type { rpcContract } from "../server";
-import { HOOK_EVENT_ENV, HOOK_FILE_SHOWN, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookFileStatus } from "../shared/hooks";
+import { HOOK_DIR_SHOWN, HOOK_EVENT_ENV, HOOK_FILE_SHOWN, HOOK_NAMES, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, hookShown, type HookFileStatus } from "../shared/hooks";
 import { createLocalHostLookup } from "./machine";
 import { hookOpen, type HookFileTarget } from "./hook-file";
 import { settingsPage } from "./open-settings";
@@ -31,8 +32,10 @@ function errorText(error: unknown): string {
 export function hookFileText(status: HookFileStatus | null): string {
   if (status === null) return "Did not answer: it may be offline.";
   if (!status.present) return `No hook file: nothing runs.`;
-  if (!status.executable) return `Has ${HOOK_FILE_SHOWN}, but it is not executable (chmod +x), so it does not run.`;
-  return `Has ${HOOK_FILE_SHOWN}: it runs.`;
+  const shown = hookShown(status.path ?? "hook");
+  const others = status.others === undefined || status.others.length === 0 ? "" : ` ${status.others.join(", ")} ${status.others.length === 1 ? "is" : "are"} there too, and ${status.others.length === 1 ? "does" : "do"} not run: only the first hook file found runs.`;
+  if (!status.executable) return `Has ${shown}, but it is not executable (chmod +x), so it does not run.${others}`;
+  return `Has ${shown}: it runs.${others}`;
 }
 
 /** bb's file target for a machine's hook file, when there is one to open; null otherwise. */
@@ -95,7 +98,9 @@ export function VoiceHooksSection() {
     <section className="space-y-3">
       <div className="space-y-1">
         <p className="text-xs text-muted-foreground">
-          Each machine runs its own hook: the executable file <code>{HOOK_FILE_SHOWN}</code> in its home folder, which you write there.
+          Each machine runs its own hook: the executable file <code>{HOOK_FILE_SHOWN}</code> in its home folder, which you write there,
+          or one named with an extension bb&apos;s File Editor opens ({HOOK_NAMES.slice(1).join(", ")}) in <code>{HOOK_DIR_SHOWN}</code>: Open the
+          script then edits it in bb. Only the first one found runs, in that order, <code>hook</code> first.
           Nothing in bb sets it or shows what is in it. It runs on the machine whose bb desktop app is in the call, from the home folder,
           with {HOOK_EVENT_ENV} set to <code>listening-started</code>, <code>listening-stopped</code>, <code>speaking-started</code>,{" "}
           <code>speaking-stopped</code>, <code>talking-started</code> or <code>talking-stopped</code>, and {HOOK_REASON_ENV} set to why

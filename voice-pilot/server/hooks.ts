@@ -2,7 +2,7 @@
  * The voice hooks on the server's side: when a session runs the hook file of the machine whose desktop app
  * holds the call (`host.ts`), and whether each machine has one, for the settings page.
  *
- * - **No command passes through here.** Each machine runs only its own `~/.config/voice-pilot/hook`; no
+ * - **No command passes through here.** Each machine runs only its own hook file in `~/.config/voice-pilot/`; no
  *   RPC, setting or call to a machine names a command or a path, and nothing reads the file's contents. bb
  *   names its app and its command line the same caller, so anything stored in bb could be changed by an
  *   agent with `bb`; a file on the machine can only be changed by someone who can already run things there.
@@ -28,7 +28,7 @@
  *   `BB_SERVER_URL` the hook got (bb's relay on a Connect machine, `host/relay.ts`) or why it got none. Never
  *   the output, which is not even read.
  */
-import { hookFailed, hookOutcome, relayLine, HOOK_FILE_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import { hookFailed, hookOutcome, hookShown, relayLine, HOOK_DIR_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
 import type { DebugLog } from "./debug-log";
 import { errorText, type Clock, type Log, type RealtimeEvent } from "./ports";
 
@@ -144,9 +144,10 @@ export class SessionHooks {
     const { host, clock } = this.runner.deps;
     this.runnable = withTimeout(host.status(hostId), HOOK_STATUS_TIMEOUT_MS, clock).then(
       (status) => {
-        if (!status.present) this.debug.add("hook", `No hook this session: ${name}, this window's machine, has no ${HOOK_FILE_SHOWN}`);
-        else if (!status.executable) this.debug.add("hook", `No hook this session: ${HOOK_FILE_SHOWN} on ${name} is not executable (chmod +x)`);
-        else this.debug.add("hook", `The hook runs on ${name}, this window's machine: ${HOOK_FILE_SHOWN}`);
+        const shown = hookShown(status.path ?? "hook");
+        if (!status.present) this.debug.add("hook", `No hook this session: ${name}, this window's machine, has no hook file in ${HOOK_DIR_SHOWN}`);
+        else if (!status.executable) this.debug.add("hook", `No hook this session: ${shown} on ${name} is not executable (chmod +x)`);
+        else this.debug.add("hook", `The hook runs on ${name}, this window's machine: ${shown}`);
         return status.present && status.executable;
       },
       (error: unknown) => {
