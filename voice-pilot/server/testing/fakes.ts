@@ -112,8 +112,11 @@ export class FakeRealtime implements RealtimePort {
   readonly hungUp: string[] = [];
   readonly sidebands: FakeSideband[] = [];
   refuseNext: Error | null = null;
+  /** While set, a call is made only once it settles: OpenAI still making it. */
+  hold: Promise<void> | null = null;
 
   async createCall(input: { sdp: string; session: Record<string, unknown> }) {
+    if (this.hold !== null) await this.hold;
     if (this.refuseNext !== null) {
       const error = this.refuseNext;
       this.refuseNext = null;
@@ -176,12 +179,12 @@ export function providerQuestion(threadId: string, id = "int_q1", patch: Record<
 }
 
 /** An approval for a command, as bb lists it. */
-export function commandApproval(threadId: string, id = "int_a1", decisions = ["allow_once", "allow_for_session", "deny"]): Record<string, unknown> {
+export function commandApproval(threadId: string, id = "int_a1", decisions = ["allow_once", "allow_for_session", "deny"], command = "npm test"): Record<string, unknown> {
   return {
     id,
     threadId,
     status: "pending",
-    payload: { kind: "approval", availableDecisions: decisions, reason: "To run the tests", subject: { kind: "command", command: "npm test", cwd: "/w", itemId: "i1", actions: [], sessionGrant: null } },
+    payload: { kind: "approval", availableDecisions: decisions, reason: "To run the tests", subject: { kind: "command", command, cwd: "/w", itemId: "i1", actions: [], sessionGrant: null } },
   };
 }
 

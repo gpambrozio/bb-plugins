@@ -885,10 +885,18 @@ export class VoiceSession {
   }
 }
 
-/** At most one live session; a new one takes over from the old. */
+/**
+ * At most one live session; a new one takes over from the old. Starts run one at a time: two Talks tapped at
+ * once (two windows, two devices) would otherwise both pass the takeover before either is live, and the first
+ * session would go on untracked, out of reach of End, the heartbeat and the plugin's disposal.
+ */
 export class VoiceSessions {
   private live: VoiceSession | null = null;
   private counter = 0;
+  /** The start in progress, and those queued behind it; settles once the last one has. */
+  private starting: Promise<unknown> = Promise.resolve();
+  /** Set by `dispose`: a start still queued, or between its awaits, makes no session. */
+  private disposed = false;
   /** The current session's debug log, or the last one's until the next Talk. */
   private debug: DebugLog | null = null;
 
@@ -908,7 +916,17 @@ export class VoiceSessions {
     threadId: string | null = null,
     pausable = false,
   ): Promise<{ sessionId: string; answerSdp: string }> {
+    const run = this.starting.then(() => this.startNow(sdp, hooks, threadId, pausable));
+    this.starting = run.catch(() => undefined);
+    return run;
+  }
+
+  private async startNow(sdp: string, hooks: HookTarget | null, threadId: string | null, pausable: boolean): Promise<{ sessionId: string; answerSdp: string }> {
+    this.refuseDisposed();
     await this.live?.end("a new session took over");
+    this.refuseDisposed();
+    const config = await this.config();
+    this.refuseDisposed();
     this.counter += 1;
     const id = `vp_${this.deps.clock.now().toString(36)}_${this.counter}`;
     const clock = this.deps.clock;
@@ -916,7 +934,7 @@ export class VoiceSessions {
     const session = new VoiceSession(
       id,
       this.deps,
-      await this.config(),
+      config,
       (ended) => {
         if (this.live === ended) this.live = null;
       },
@@ -932,6 +950,10 @@ export class VoiceSessions {
       await session.end("the call could not be made");
       throw error;
     }
+  }
+
+  private refuseDisposed(): void {
+    if (this.disposed) throw new Error("Voice Pilot stopped while the session was starting.");
   }
 
   private find(sessionId: string): VoiceSession {
@@ -984,6 +1006,8 @@ export class VoiceSessions {
   }
 
   async dispose(): Promise<void> {
+    // A start making its call when this runs is `live` already: ending it hangs that call up as it lands.
+    this.disposed = true;
     await this.live?.end("the plugin stopped");
     // The closing hooks (the open pairs, then "listening-stopped") get a moment to reach the machine.
     const runner = this.deps.hooks;

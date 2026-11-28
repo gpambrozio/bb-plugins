@@ -290,6 +290,39 @@ describe("bb's questions", () => {
     expect(bb.answers[0]?.answers).toEqual({ q0: { selected: [], freeText: "Whatever staging uses." } });
   });
 
+  it("bind each free-text answer to its own question, and send once both are answered", async () => {
+    const { run, bb, say } = setup();
+    const ask = (id: string, prompt: string) => ({ id, prompt, allowFreeText: true, required: true, options: [] });
+    bb.pending.set("thr_a", [providerQuestion("thr_a", "int_q1", { payload: { kind: "user_question", questions: [ask("name", "Project name?"), ask("date", "Target date?")] } })]);
+    await run("read_question", { thread_id: "thr_a" });
+    await say("Call it Atlas. Next Friday.");
+    // Both from one span of words: refused, not the whole span copied into each.
+    expect(
+      await run("answer_question", { thread_id: "thr_a", interaction_id: "int_q1", answers: [{ question: 1, use_spoken_words: true }, { question: 2, use_spoken_words: true }] }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("one question at a time") });
+    expect(await run("answer_question", { thread_id: "thr_a", interaction_id: "int_q1", answers: [{ question: 1, use_spoken_words: true }] })).toMatchObject({
+      ok: true,
+      kept: '1: "Call it Atlas. Next Friday."',
+      still_open: ["2: Target date?"],
+    });
+    expect(bb.answers).toEqual([]);
+    // Reading it again keeps the answer given; the next answer's words start after it.
+    await run("read_question", { thread_id: "thr_a" });
+    await say("The fourth of December.");
+    expect(await run("answer_question", { thread_id: "thr_a", interaction_id: "int_q1", answers: [{ question: 2, use_spoken_words: true }] })).toMatchObject({
+      ok: true,
+      answered: '1: "Call it Atlas. Next Friday."; 2: "The fourth of December."',
+    });
+    expect(bb.answers).toEqual([
+      {
+        threadId: "thr_a",
+        interactionId: "int_q1",
+        via: "provider",
+        answers: { name: { selected: [], freeText: "Call it Atlas. Next Friday." }, date: { selected: [], freeText: "The fourth of December." } },
+      },
+    ]);
+  });
+
   it("refuse an option the question does not have, and one answered elsewhere since", async () => {
     const { run, bb } = withQuestion();
     await run("read_question", { thread_id: "thr_a" });
@@ -359,6 +392,55 @@ describe("approvals", () => {
     await clock.advance(CONFIRM_WINDOW_MS + 1);
     await say("Yes.");
     expect(await run("confirm_decision")).toMatchObject({ ok: false });
+    expect(bb.decisions).toEqual([]);
+  });
+
+  it("read back the whole command, its last part included", async () => {
+    const { run, bb, say } = setup();
+    const command = `printf '%s' ${"word ".repeat(50).trim()}; rm -rf ./important-data`;
+    bb.pending.set("thr_a", [commandApproval("thr_a", "int_a1", undefined, command)]);
+    const read = await run("read_question", { thread_id: "thr_a" });
+    expect(JSON.stringify(read)).toContain("rm -rf ./important-data");
+    const prepared = await run("decide_request", { thread_id: "thr_a", interaction_id: "int_a1", decision: "allow_once" });
+    expect(prepared).toMatchObject({ ok: true, read_back: `Approve the request from "Fix the login test" to run a command: ${command}, this once?` });
+    await say("Yes.");
+    expect(await run("confirm_decision")).toMatchObject({ ok: true });
+    expect(bb.decisions).toEqual([{ threadId: "thr_a", interactionId: "int_a1", decision: "allow_once" }]);
+  });
+
+  it("refuse to approve a command too long to read aloud whole, and send the user to bb", async () => {
+    const { run, bb, say } = setup();
+    // Over 400 characters of harmless arguments, then the part that matters.
+    const command = `printf '%s\\n' ${Array.from({ length: 70 }, (_, i) => `arg${i}`).join(" ")}; rm -rf ./important-data`;
+    expect(command.length).toBeGreaterThan(400);
+    bb.pending.set("thr_a", [commandApproval("thr_a", "int_a1", undefined, command)]);
+    const read = await run("read_question", { thread_id: "thr_a" });
+    const said = (read as { waiting: { read_aloud: string }[] }).waiting[0]?.read_aloud ?? "";
+    expect(said).toContain("cannot be approved by voice. Approve it in bb.");
+    expect(said).not.toContain("printf");
+    for (const decision of ["allow_once", "allow_for_session"]) {
+      expect(await run("decide_request", { thread_id: "thr_a", interaction_id: "int_a1", decision })).toMatchObject({ ok: false, error: expect.stringContaining("Approve it in bb") });
+    }
+    await say("Yes.");
+    expect(await run("confirm_decision")).toMatchObject({ ok: false, error: expect.stringContaining("nothing to confirm") });
+    expect(bb.decisions).toEqual([]);
+    // Denying it unheard is safe, and still takes a read-back and a yes.
+    expect(await run("decide_request", { thread_id: "thr_a", interaction_id: "int_a1", decision: "deny" })).toMatchObject({
+      ok: true,
+      read_back: 'Deny the request from "Fix the login test" to run a command?',
+    });
+    await say("Yes.");
+    expect(await run("confirm_decision")).toMatchObject({ ok: true, sent: "deny it" });
+    expect(bb.decisions).toEqual([{ threadId: "thr_a", interactionId: "int_a1", decision: "deny" }]);
+  });
+
+  it("are not sent when the request changed after the read-back", async () => {
+    const { run, bb, say } = withApproval();
+    await run("read_question", { thread_id: "thr_a" });
+    await run("decide_request", { thread_id: "thr_a", interaction_id: "int_a1", decision: "allow_once" });
+    bb.pending.set("thr_a", [commandApproval("thr_a", "int_a1", undefined, "npm test && npm publish")]);
+    await say("Yes.");
+    expect(await run("confirm_decision")).toMatchObject({ ok: false, error: expect.stringContaining("changed") });
     expect(bb.decisions).toEqual([]);
   });
 

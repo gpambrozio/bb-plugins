@@ -29,7 +29,7 @@ import { RateLimit, SendGate, saidYes } from "./policy";
 import type { StageRequest, StageResult } from "./prompt-edits";
 import { errorText, type Clock } from "./ports";
 import { LinkList, linksIn, parts, readableReply } from "./rich";
-import { DECISION_WORDS, buildAnswers, parsePending, readAloud, spoken, type Decision, type Pending, type Pick } from "./questions";
+import { DECISION_WORDS, buildAnswers, parsePending, readAloud, spoken, type Answers, type Decision, type Pending, type Pick } from "./questions";
 
 export interface ToolSpec {
   name: string;
@@ -124,7 +124,8 @@ export const TOOLS: readonly ToolSpec[] = [
   },
   {
     name: "answer_question",
-    description: "Answers a question read with read_question, with the user's spoken choice: an option by its number or label, or (where the question allows it) their own words since it was read. Never pick for them.",
+    description:
+      "Answers a question read with read_question, with the user's spoken choice: an option by its number or label, or (where the question allows it) their own words since it was read. Never pick for them. With several questions, answers may come over several calls: they are kept, and sent once every required question has one.",
     parameters: {
       type: "object",
       properties: {
@@ -138,7 +139,11 @@ export const TOOLS: readonly ToolSpec[] = [
             properties: {
               question: { type: "integer", description: "The question's number, from 1; may be left out when there is one question." },
               options: { type: "array", items: { type: "string" }, description: "The chosen options' numbers (\"2\") or labels." },
-              use_spoken_words: { type: "boolean", description: "Answer with what the user said since the question was read, word for word." },
+              use_spoken_words: {
+                type: "boolean",
+                description:
+                  "Answer with what the user said since the question was read (or since your last answer_question call for it), word for word. One question per call: ask questions that take the user's own words one at a time.",
+              },
             },
             additionalProperties: false,
           },
@@ -273,6 +278,10 @@ interface ReadEntry {
   pending: Pending;
   readAt: number;
   thread: string;
+  /** Answers given so far to a question asked in parts, sent once every required one has one. */
+  drafts: Answers;
+  /** Where the user's words for the next free-text answer start: the read, then each answer saved. */
+  wordsFrom: number;
 }
 
 interface Prepared {
@@ -281,6 +290,8 @@ interface Prepared {
   decision: Decision;
   preparedAt: number;
   readback: string;
+  /** The command (or other detail) read back, compared with the request again before it is sent. */
+  detail: string | null;
 }
 
 /** One session's tools: what was read, what waits for a yes, and the limits on sends. */
@@ -554,7 +565,11 @@ export class VoiceTools {
     const pending = (await this.deps.bb.interactions(thread.id)).map(parsePending).filter((entry): entry is Pending => entry !== null);
     if (pending.length === 0) return { ok: true, thread: thread.title, note: "Nothing in this thread waits on the user any more." };
     const readAt = this.deps.clock.now();
-    for (const entry of pending) this.read.set(`${thread.id}/${entry.interactionId}`, { pending: entry, readAt, thread: thread.title });
+    for (const entry of pending) {
+      const key = `${thread.id}/${entry.interactionId}`;
+      // Reading it again keeps the answers already given; the words for the next one start here.
+      this.read.set(key, { pending: entry, readAt, thread: thread.title, drafts: this.read.get(key)?.drafts ?? {}, wordsFrom: readAt });
+    }
     const items = pending.slice(0, 3).map((entry) => ({ interaction_id: entry.interactionId, kind: entry.kind, read_aloud: readAloud(entry, `"${thread.title}"`) }));
     this.deps.debug.add("question", `Read what "${thread.title}" waits on`, items.map((item) => item.read_aloud).join("\n\n"));
     return { ok: true, thread: thread.title, waiting: items, ...(pending.length > 3 ? { more: pending.length - 3 } : {}) };
@@ -578,7 +593,7 @@ export class VoiceTools {
   private async answerQuestion(args: Record<string, unknown>, askedAt: number): Promise<Result> {
     const found = await this.fresh(args);
     if ("error" in found) return fail(found.error);
-    const { pending, readAt, thread } = found.entry;
+    const { pending, thread, drafts, wordsFrom } = found.entry;
     if (pending.kind !== "question") return fail(pending.kind === "approval" ? "That is an approval: use decide_request." : "That cannot be answered by voice; the user answers it in bb.");
     const raw = Array.isArray(args.answers) ? (args.answers as unknown[]) : [];
     const picks: Pick[] = raw.map((item) => {
@@ -591,12 +606,25 @@ export class VoiceTools {
       };
     });
     if (picks.length === 0) return fail("Give the user's answer to each question.");
-    const words = picks.some((pick) => pick.useSpokenWords) ? await this.deps.words(readAt, askedAt) : null;
-    const built = buildAnswers(pending.questions, picks, words);
+    const words = picks.some((pick) => pick.useSpokenWords) ? await this.deps.words(wordsFrom, askedAt) : null;
+    const built = buildAnswers(pending.questions, picks, words, drafts);
     if (!built.ok) return fail(built.error);
+    const key = `${pending.threadId}/${pending.interactionId}`;
+    if (built.open.length > 0) {
+      // bb takes every required answer in one go: keep these, and the next answer's words start now.
+      this.read.set(key, { ...found.entry, drafts: built.answers, wordsFrom: askedAt });
+      this.deps.debug.add("question", `Kept the answers so far for "${thread}": ${built.said}`, JSON.stringify(built.answers, null, 2));
+      return {
+        ok: true,
+        thread,
+        kept: built.said,
+        still_open: built.open.map((question) => `${pending.questions.indexOf(question) + 1}: ${question.prompt}`),
+        note: "Nothing is sent yet. Say in a few words what was kept, ask the next open question, and call answer_question with its answer once the user gives it.",
+      };
+    }
     return this.sending(async () => {
       await this.deps.bb.answer(pending.threadId, pending.interactionId, pending.via, built.answers);
-      this.read.delete(`${pending.threadId}/${pending.interactionId}`);
+      this.read.delete(key);
       this.deps.debug.add("question", `Answered "${thread}": ${built.said}`, JSON.stringify(built.answers, null, 2));
       return { ok: true, thread, answered: built.said, note: "Say back what was sent." };
     });
@@ -608,11 +636,13 @@ export class VoiceTools {
     const { pending, thread } = found.entry;
     if (pending.kind !== "approval") return fail(pending.kind === "question" ? "That is a question: use answer_question." : "That cannot be answered by voice; the user answers it in bb.");
     const decision = str(args.decision) as Decision;
+    if (pending.inBb !== null && decision !== "deny") return fail(`${pending.inBb} Say so to the user.`);
     if (!pending.decisions.includes(decision)) return fail(`It offers only: ${pending.decisions.map((option) => DECISION_WORDS[option]).join(", ")}.`);
-    const command = pending.what === "run a command" && pending.detail !== null ? `: ${spoken(pending.detail, 120)}` : "";
+    // The whole command, never cut: a yes approves all of it, so all of it is read back.
+    const command = pending.what === "run a command" && pending.detail !== null ? `: ${pending.detail}` : "";
     const scope = decision === "allow_for_session" ? ", for the rest of its session" : decision === "allow_once" ? ", this once" : "";
     const readback = `${decision === "deny" ? "Deny" : "Approve"} the request from "${spoken(thread, 80)}" to ${pending.what}${command}${scope}?`;
-    this.prepared = { threadId: pending.threadId, interactionId: pending.interactionId, decision, preparedAt: this.deps.clock.now(), readback };
+    this.prepared = { threadId: pending.threadId, interactionId: pending.interactionId, decision, preparedAt: this.deps.clock.now(), readback, detail: pending.detail };
     this.deps.debug.add("question", `Read back, waiting for a yes: ${readback}`);
     return { ok: true, read_back: readback, note: "Say the read-back as a question and wait. Call confirm_decision only once the user says yes to it." };
   }
@@ -633,6 +663,10 @@ export class VoiceTools {
     return this.sending(async () => {
       const now = (await this.deps.bb.interactions(prepared.threadId)).map(parsePending).find((pending) => pending?.interactionId === prepared.interactionId) ?? null;
       if (now === null) return fail("It no longer waits: it was answered elsewhere or withdrawn.");
+      // What is sent is what was read back: the same request, still one the voice may decide this way.
+      if (now.kind !== "approval" || now.detail !== prepared.detail || !now.decisions.includes(prepared.decision)) {
+        return fail("The request changed since it was read back. Read it again with read_question.");
+      }
       await this.deps.bb.decide(prepared.threadId, prepared.interactionId, prepared.decision);
       this.read.delete(`${prepared.threadId}/${prepared.interactionId}`);
       this.deps.debug.add("question", `Sent: ${prepared.readback} (${prepared.decision})`, words ?? undefined);

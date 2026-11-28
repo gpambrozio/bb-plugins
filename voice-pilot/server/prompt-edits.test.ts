@@ -6,9 +6,10 @@ import { PromptEdits, STAGED_KEY } from "./prompt-edits";
 const NOW = "You are Voice Pilot.\n\nStyle: speak briefly.";
 
 /** The plugin's storage and the Instructions setting, in memory. */
-function setUp(instructions = NOW) {
-  const rows = new Map<string, unknown>();
-  const setting = { value: instructions, writes: [] as string[] };
+function setUp(instructions = NOW, shared?: { rows: Map<string, unknown>; setting: { value: string; writes: string[]; hold: Promise<void> | null } }, idPrefix = "edit") {
+  const rows = shared?.rows ?? new Map<string, unknown>();
+  /** `hold`, while set, keeps a write of the setting from landing until it settles. */
+  const setting = shared?.setting ?? { value: instructions, writes: [] as string[], hold: null as Promise<void> | null };
   let clock = 1_000;
   let ids = 0;
   const changed = vi.fn();
@@ -21,6 +22,7 @@ function setUp(instructions = NOW) {
     instructions: {
       get: async () => setting.value,
       set: async (text) => {
+        if (setting.hold !== null) await setting.hold;
         setting.value = text;
         setting.writes.push(text);
       },
@@ -28,7 +30,7 @@ function setUp(instructions = NOW) {
     clock: { now: () => clock },
     log: { info: vi.fn(), warn: vi.fn() },
     changed,
-    newId: () => `edit_${++ids}`,
+    newId: () => `${idPrefix}_${++ids}`,
   });
   return { edits, rows, setting, changed, tick: (ms: number) => (clock += ms) };
 }
@@ -116,6 +118,59 @@ describe("the owner's review", () => {
     await expect(edits.reject(first.staged.id)).rejects.toThrow(/A newer instructions edit replaced this one/u);
     expect(setting.writes).toEqual([]);
     expect((await edits.staged())?.id).toBe(second.staged.id);
+  });
+});
+
+describe("overlapping changes", () => {
+  /** A promise and the function that settles it. */
+  function gate() {
+    let open = () => {};
+    const promise = new Promise<void>((resolve) => (open = resolve));
+    return { promise, open };
+  }
+  const first = { summary: "Call the user Sam", text: `${NOW}\n\nCall the user Sam.` };
+  const second = { summary: "Shorter greeting", changes: [{ find: "", replace: "Keep the greeting short." }] };
+
+  it("keep a replacement the voice stages while the owner's Apply writes the setting", async () => {
+    const { edits, setting } = setUp();
+    await edits.stage(first);
+    const writing = gate();
+    setting.hold = writing.promise;
+    const applying = edits.apply("edit_1");
+    const staging = edits.stage(second);
+    writing.open();
+    await applying;
+    const { staged } = await staging;
+    // The replacement is made against the instructions the Apply wrote, and waits for review.
+    expect(staged).toMatchObject({ id: "edit_2", base: first.text, proposed: `${first.text}\n\nKeep the greeting short.`, replaced: null });
+    await expect(edits.read()).resolves.toEqual({ staged, current: first.text });
+  });
+
+  it("apply or reject an edit once: of two at once, the second is refused", async () => {
+    const { edits, setting } = setUp();
+    await edits.stage(first);
+    const writing = gate();
+    setting.hold = writing.promise;
+    const applying = edits.apply("edit_1");
+    const rejecting = edits.reject("edit_1");
+    writing.open();
+    await applying;
+    await expect(rejecting).rejects.toThrow(/applied or rejected already/u);
+    expect(setting.writes).toEqual([first.text]);
+  });
+
+  it("keep an edit the other copy of the plugin stages during a reload", async () => {
+    const old = setUp();
+    const fresh = setUp(NOW, { rows: old.rows, setting: old.setting }, "new");
+    await old.edits.stage(first);
+    const writing = gate();
+    old.setting.hold = writing.promise;
+    const applying = old.edits.apply("edit_1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await fresh.edits.stage(second);
+    writing.open();
+    await applying;
+    expect((await fresh.edits.read()).staged).toMatchObject({ id: "new_1", summary: "Shorter greeting" });
   });
 });
 

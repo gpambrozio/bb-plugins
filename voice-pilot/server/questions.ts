@@ -49,10 +49,13 @@ export type Pending =
       threadId: string;
       /** What it asks to do, in plain words. */
       what: string;
-      /** The command, the plan's opening, the tool, cut for speech. */
+      /** The command (always whole: see `COMMAND_VOICE_MAX`), the plan's opening, the files. */
       detail: string | null;
       reason: string | null;
+      /** The decisions the voice may send: never an approval when `inBb` is set. */
       decisions: Decision[];
+      /** Why only bb can approve it (a command too long to read aloud whole); null when the voice can. */
+      inBb: string | null;
     }
   | { kind: "other"; interactionId: string; threadId: string; title: string };
 
@@ -109,21 +112,36 @@ function questionsOf(data: z.infer<typeof QuestionsSchema>): SpokenQuestion[] {
 
 const DECISIONS: readonly Decision[] = ["allow_once", "allow_for_session", "deny"];
 
-function approvalWhat(subject: Record<string, unknown>): { what: string; detail: string | null } {
+/**
+ * The longest command the voice reads aloud, and so may approve. A longer one is never cut for speech: the
+ * cut-off part could be the one that matters (`…; rm -rf ./data`), and a yes would approve it unheard. It is
+ * approved in bb instead; the voice may still deny it.
+ */
+export const COMMAND_VOICE_MAX = 300;
+
+function approvalWhat(subject: Record<string, unknown>): { what: string; detail: string | null; inBb: string | null } {
   const text = (key: string) => (typeof subject[key] === "string" ? (subject[key] as string) : null);
   switch (subject.kind) {
-    case "command":
-      return { what: "run a command", detail: text("command") === null ? null : spoken(text("command") ?? "", 300) };
+    case "command": {
+      const command = text("command");
+      if (command === null) return { what: "run a command", detail: null, inBb: "bb did not say which command it is, so it cannot be approved by voice. Approve it in bb." };
+      // Whitespace only is folded (a newline reads as a space): every character of the command is kept.
+      const whole = command.replace(/\s+/gu, " ").trim();
+      if (whole.length > COMMAND_VOICE_MAX) {
+        return { what: "run a command", detail: null, inBb: `The command is too long to read aloud in full (${whole.length} characters), so it cannot be approved by voice. Approve it in bb.` };
+      }
+      return { what: "run a command", detail: whole, inBb: null };
+    }
     case "file_change":
-      return { what: "change files", detail: text("writeScope") };
+      return { what: "change files", detail: text("writeScope"), inBb: null };
     case "permission_grant":
-      return { what: `get more permissions${text("toolName") === null ? "" : ` for ${text("toolName")}`}`, detail: null };
+      return { what: `get more permissions${text("toolName") === null ? "" : ` for ${text("toolName")}`}`, detail: null, inBb: null };
     case "plan":
-      return { what: "go ahead with its plan", detail: text("plan") === null ? null : spoken(text("plan") ?? "", 1_200) };
+      return { what: "go ahead with its plan", detail: text("plan") === null ? null : spoken(text("plan") ?? "", 1_200), inBb: null };
     case "tool_use":
-      return { what: `use the tool ${text("tool") ?? "it names"}`, detail: null };
+      return { what: `use the tool ${text("tool") ?? "it names"}`, detail: null, inBb: null };
     default:
-      return { what: "do something bb asks you to approve", detail: null };
+      return { what: "do something bb asks you to approve", detail: null, inBb: null };
   }
 }
 
@@ -142,10 +160,11 @@ export function parsePending(interaction: unknown): Pending | null {
   }
   const approval = Approval.safeParse(interaction);
   if (approval.success) {
-    const { what, detail } = approvalWhat(approval.data.payload.subject);
-    const decisions = DECISIONS.filter((decision) => approval.data.payload.availableDecisions.includes(decision));
+    const { what, detail, inBb } = approvalWhat(approval.data.payload.subject);
+    const offered = DECISIONS.filter((decision) => approval.data.payload.availableDecisions.includes(decision));
+    const decisions = inBb === null ? offered : offered.filter((decision) => decision === "deny");
     const reason = approval.data.payload.reason ?? null;
-    return { kind: "approval", interactionId, threadId, what, detail, reason: reason === null ? null : spoken(reason, 300), decisions };
+    return { kind: "approval", interactionId, threadId, what, detail, reason: reason === null ? null : spoken(reason, 300), decisions, inBb };
   }
   const titled = Titled.safeParse(interaction);
   return { kind: "other", interactionId, threadId, title: titled.success ? spoken(titled.data.payload.title ?? titled.data.payload.kind, 200) : "a request" };
@@ -177,6 +196,10 @@ export function readAloud(pending: Pending, thread: string): string {
       const detail = pending.detail === null ? "" : `: ${bare(pending.detail)}`;
       const reason = pending.reason === null ? "" : ` Its reason: ${bare(pending.reason)}.`;
       const choices = pending.decisions.map((decision) => DECISION_WORDS[decision]).join(", or ");
+      if (pending.inBb !== null) {
+        const deny = pending.decisions.includes("deny") ? " You can deny it here." : "";
+        return `${thread} asks to ${pending.what}${detail}.${reason} ${pending.inBb}${deny}`;
+      }
       return `${thread} asks to ${pending.what}${detail}.${reason} You can ${choices}.`;
     }
     case "other":
@@ -218,20 +241,34 @@ function findQuestion(questions: readonly SpokenQuestion[], ref: number | string
 }
 
 /**
- * The answers to send for `picks`, with `words` (what you said since the question was read) as any free-text
- * answer; or why not, as a sentence for the model. `said` is what the voice says back.
+ * The answers so far: `prior` (from earlier calls for the same interaction) with `picks` added, and `words` (what
+ * you said since the question was read, or since the last answer saved for it) as the one free-text answer; or
+ * why not, as a sentence for the model. `open` lists the required questions still unanswered: nothing is sent
+ * until it is empty. `said` is what the voice says back, every answer so far in question order.
+ *
+ * One free-text answer per call: a transcript span has no boundary between two answers, so "Call it Atlas.
+ * Next Friday." would otherwise go to both "Project name?" and "Target date?". Each is asked and answered in
+ * turn, and kept until the last one is.
  */
 export function buildAnswers(
   questions: readonly SpokenQuestion[],
   picks: readonly Pick[],
   words: string | null,
-): { ok: true; answers: Answers; said: string } | { ok: false; error: string } {
-  const answers: Answers = {};
-  const said: string[] = [];
+  prior: Answers = {},
+): { ok: true; answers: Answers; said: string; open: SpokenQuestion[] } | { ok: false; error: string } {
+  if (picks.filter((pick) => pick.useSpokenWords === true).length > 1) {
+    return {
+      ok: false,
+      error: "Only one question at a time can take the user's own words. Ask the first, call answer_question with its answer alone, then ask the next.",
+    };
+  }
+  const answers: Answers = { ...prior };
+  const now = new Set<string>();
   for (const pick of picks) {
     const question = findQuestion(questions, pick.question);
     if (question === null) return { ok: false, error: `There is no question ${String(pick.question ?? "")}; there are ${questions.length}. Name it by number.` };
-    if (answers[question.id] !== undefined) return { ok: false, error: `Question ${questions.indexOf(question) + 1} is picked twice.` };
+    if (now.has(question.id)) return { ok: false, error: `Question ${questions.indexOf(question) + 1} is picked twice.` };
+    now.add(question.id);
     const chosen: SpokenOption[] = [];
     for (const ref of pick.options ?? []) {
       const option = findOption(question, ref);
@@ -247,11 +284,17 @@ export function buildAnswers(
     }
     if (chosen.length === 0 && freeText === undefined) return { ok: false, error: `Pick an option for "${question.prompt}", or answer it with the user's own words.` };
     answers[question.id] = { selected: chosen.map((option) => option.value), ...(freeText === undefined ? {} : { freeText }) };
-    const labels = chosen.map((option) => option.label).join(" and ");
-    const text = freeText === undefined ? labels : labels === "" ? `"${freeText}"` : `${labels}, with "${freeText}"`;
-    said.push(questions.length > 1 ? `${questions.indexOf(question) + 1}: ${text}` : text);
   }
-  const missing = questions.filter((question) => question.required && answers[question.id] === undefined);
-  if (missing.length > 0) return { ok: false, error: `Answer every question first: still open ${missing.map((question) => `"${question.prompt}"`).join(", ")}.` };
-  return { ok: true, answers, said: said.join("; ") };
+  const said = questions.flatMap((question, index) => {
+    const answer = answers[question.id];
+    if (answer === undefined) return [];
+    const labels = question.options
+      .filter((option) => answer.selected.includes(option.value))
+      .map((option) => option.label)
+      .join(" and ");
+    const text = answer.freeText === undefined ? labels : labels === "" ? `"${answer.freeText}"` : `${labels}, with "${answer.freeText}"`;
+    return [questions.length > 1 ? `${index + 1}: ${text}` : text];
+  });
+  const open = questions.filter((question) => question.required && answers[question.id] === undefined);
+  return { ok: true, answers, said: said.join("; "), open };
 }

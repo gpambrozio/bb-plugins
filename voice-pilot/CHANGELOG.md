@@ -8,7 +8,10 @@
 - Ask what's going on, what a thread said, or what waits on you. It reads bb's questions aloud with their
   options and answers them with the choice you say, then tells you what it sent.
 - Approvals (a command, a file change, a permission, a plan) are read out; one is sent only after you say yes
-  to a read-back of exactly what will be sent.
+  to a read-back of exactly what will be sent. A command too long to read aloud in full is approved in bb,
+  never by voice on a part of it.
+- With several questions in one, the voice asks them one at a time and sends all the answers together, so
+  each answer in your own words goes to its own question.
 - Send a message to a thread, start a thread in a project, stop a thread or show one on screen, by voice.
   Nothing is merged, archived, deleted or published by voice.
 - Reads everything in a thread's reply, tables, cards and lists included, and opens a link you ask for (a

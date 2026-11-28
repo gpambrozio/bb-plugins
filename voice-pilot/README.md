@@ -22,11 +22,13 @@ subscription.
   for you and reads it out with its options, numbered. Say your choice ("the second one", "Green", or your
   own words where the question allows them) and it answers in bb, then tells you what it sent. It never
   picks for you: an option must be one of the question's own, and an answer in your own words is your
-  words from the transcript, not the model's.
+  words from the transcript, not the model's. With several questions it asks them one at a time, keeps each
+  answer, and answers in bb once all are answered.
 - **Approvals need your yes.** A command, a file change, a permission or a plan is read out; when you say
   to approve or deny it, the voice reads back exactly what it will send ("Approve the request from *Fix CI*
   to run a command: npm test, this once?") and sends it only once you say yes to that read-back. The yes is
-  checked on your transcript, not the model's word.
+  checked on your transcript, not the model's word. A command too long to read aloud in full (over 300
+  characters) is never read in part: the voice says to approve it in bb, and can only deny it.
 - **Does what you ask in bb:** sends a message to a thread's agent (queued behind its running turn, never
   cutting in), starts a thread in a project with that project's defaults, stops a thread, shows a thread on
   screen, finds a thread by topic. Messages go in the voice's wording, with your own words beside them for

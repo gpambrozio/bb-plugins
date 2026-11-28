@@ -4,6 +4,11 @@
  * rejects it. It lives in the plugin's storage (`bb.storage.kv`), one at a time: a new one replaces the one
  * waiting and says so. Applying writes the **Instructions** setting, which each session reads once, as it
  * starts, so the session in progress keeps its instructions and the next one gets the new ones.
+ *
+ * Stage, apply and reject each read, change and write the one stored edit across several awaits, so they run
+ * one at a time: an Apply clicked while the voice stages a replacement would otherwise delete the replacement
+ * unreviewed. Across a reload two copies of the plugin are loaded for a moment, and the queue is per copy, so
+ * apply and reject also delete the stored edit only while it is still the one they acted on.
  */
 import { randomUUID } from "node:crypto";
 
@@ -34,6 +39,8 @@ export interface StageResult {
 
 export class PromptEdits {
   private readonly newId: () => string;
+  /** The change in progress, and those queued behind it. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly deps: PromptEditsDeps) {
     this.newId = deps.newId ?? (() => randomUUID());
@@ -56,6 +63,10 @@ export class PromptEdits {
 
   /** Stages an edit for the owner's review, replacing any edit waiting. Never touches the setting. */
   async stage(request: StageRequest): Promise<StageResult> {
+    return this.inTurn(() => this.stageNow(request));
+  }
+
+  private async stageNow(request: StageRequest): Promise<StageResult> {
     const summary = request.summary.trim();
     if (summary === "") throw new Error("Say in a few words what the edit changes, as the summary.");
     const base = await this.deps.instructions.get();
@@ -74,21 +85,46 @@ export class PromptEdits {
 
   /** Applies staged edit `id`: its text, or the owner's tweak of it. The next session starts with it. */
   async apply(id: string, tweaked?: string): Promise<void> {
+    return this.inTurn(() => this.applyNow(id, tweaked));
+  }
+
+  private async applyNow(id: string, tweaked?: string): Promise<void> {
     const staged = await this.waiting(id);
     const text = tweaked ?? staged.proposed;
     if (text.trim() === "") throw new Error("The instructions cannot be empty. To go back to the default, clear the Instructions setting.");
     await this.deps.instructions.set(text);
-    await this.deps.kv.delete(STAGED_KEY);
+    await this.drop(id);
     this.deps.log.info(tweaked === undefined || tweaked === staged.proposed ? "Applied the staged instructions edit." : "Applied the staged instructions edit, as the owner tweaked it.");
     this.deps.changed();
   }
 
   /** Drops staged edit `id`; the instructions stay as they are. */
   async reject(id: string): Promise<void> {
+    return this.inTurn(() => this.rejectNow(id));
+  }
+
+  private async rejectNow(id: string): Promise<void> {
     await this.waiting(id);
-    await this.deps.kv.delete(STAGED_KEY);
+    await this.drop(id);
     this.deps.log.info("Rejected the staged instructions edit.");
     this.deps.changed();
+  }
+
+  /** Runs `work` once every change queued before it has settled. */
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Deletes the stored edit if it is still `id`: one staged meanwhile, by the other copy during a reload, stays. */
+  private async drop(id: string): Promise<void> {
+    const stored = await this.staged();
+    if (stored?.id !== id) {
+      this.deps.log.warn("A newer instructions edit was staged meanwhile; it stays for review.");
+      return;
+    }
+    await this.deps.kv.delete(STAGED_KEY);
   }
 
   /** The staged edit when it is still `id`: one replaced since the owner looked is never applied or dropped blind. */

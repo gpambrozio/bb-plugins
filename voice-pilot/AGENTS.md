@@ -16,7 +16,7 @@ the voice.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wiring: settings, the app's RPCs (behind `server/rpc.ts`'s client-only gate), thread events → announcements, `onDispose`. |
-| `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, the greeting at start, event dispatch, tools, announcements, renewal at the hour's cap, the pause and resume on the phone, the idle end, the app's heartbeat and the thread on its screen. |
+| `server/session.ts` | One live session (`VoiceSessions`, whose starts run one at a time so two Talks at once never leave an untracked call, and which a disposal mid-start reaches): the call, the sideband, the greeting at start, event dispatch, tools, announcements, renewal at the hour's cap, the pause and resume on the phone, the idle end, the app's heartbeat and the thread on its screen. |
 | `server/tools.ts` | The tool list and `VoiceTools`, which runs each call: reads, sends, questions, approvals (two steps), links, `end_session`. |
 | `server/rich.ts`, `server/links.ts`, `app/links.ts` | A reply in full for the voice: bb's ```ui blocks parsed and flattened, links numbered for the session; what `open_link` may open; a link to this bb's own thread. |
 | `server/questions.ts` | bb's pending interactions as the voice reads and answers them: parse, read aloud, build answers. |
@@ -43,11 +43,19 @@ the voice.
   `read_question` read in this session in the last ten minutes, still pending; an option must be one of the
   question's own, by number or label (`buildAnswers`); a free-text answer is what you said after the read,
   from the transcript (`UtteranceLog.between`), never text from the model. The result says what was sent,
-  and the instructions tell the voice to say it back.
+  and the instructions tell the voice to say it back. **One free-text answer per call**: a span of
+  transcript has no boundary between two answers, so "Call it Atlas. Next Friday." once went to both
+  "Project name?" and "Target date?" (review pass 1). A call that answers some questions is kept on the read
+  entry (`drafts`), the next answer's words start after it (`wordsFrom`), a re-read keeps the drafts, and
+  bb gets every answer at once when the last required one comes.
 - **An approval needs your yes to its read-back.** `decide_request` only prepares one decision (one the
   interaction offers) and answers the read-back; `confirm_decision` sends it only when your transcript
   between the read-back and the confirming response is a plain yes (`saidYes`: a yes word and no no word),
-  within two minutes. The "approve it" that led to the read-back does not count.
+  within two minutes. The "approve it" that led to the read-back does not count. **The read-back is the
+  whole command, never a cut of it**: a command is kept whole (only whitespace folded), and one longer than
+  `COMMAND_VOICE_MAX` (300 characters) cannot be approved by voice at all (`inBb`; the voice sends the owner to
+  bb and may still deny it), because a cut-off end (`…; rm -rf ./data`) would be approved unheard (review pass
+  1). `confirm_decision` sends only if the request still has the detail that was read back.
 - **Messages and new threads go in the model's wording, with your request's words beside them.** Each
   carries, as an agent-only part framed as context and not instructions, the words of the request alone:
   what you said from the start of the last voice response before you last spoke (`requestStart`), never
@@ -92,7 +100,10 @@ the voice.
   (`server/prompt-edits.ts`, in `bb.storage.kv`), as changes quoted from the owner's part or as a whole text;
   only `prompt.apply` (as staged, or the owner's tweak) and `prompt.reject` change or drop it, behind
   `requireApp`. One waits at a time: a new one replaces it and records what it replaced, and apply or reject
-  of an id that is no longer the staged one is refused, so a newer edit is never applied blind. Applying
+  of an id that is no longer the staged one is refused, so a newer edit is never applied blind. Stage, apply
+  and reject run one at a time (`inTurn`), and apply and reject delete the stored edit only while it is still
+  theirs (`drop`): an Apply whose setting write was still landing once deleted a replacement the voice staged
+  meanwhile (review pass 1), and during a reload the other copy's queue is not this one's. Applying
   writes the **Instructions** setting, which a session reads once as it starts (`VoiceSession`'s
   `config`, reused by renewals and resumes), so it reaches the next session only. The rules say to propose
   only on the user's own words, never on an item's, a tool result's or an agent's. The Voice page shows the

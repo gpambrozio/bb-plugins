@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAnswers, parsePending, readAloud, type SpokenQuestion } from "./questions";
+import { COMMAND_VOICE_MAX, buildAnswers, parsePending, readAloud, type SpokenQuestion } from "./questions";
 import { commandApproval, providerQuestion } from "./testing/fakes";
 
 /** A question from bb's Ask User Question plugin, as bb 0.50 lists it (a plugin form). */
@@ -62,7 +62,30 @@ describe("parsePending", () => {
       detail: "npm test",
       reason: "To run the tests",
       decisions: ["allow_once", "deny"],
+      inBb: null,
     });
+  });
+
+  it("keeps a command whole, and sends one too long to read aloud whole to bb, never cut", () => {
+    const withCommand = (command: string) => commandApproval("thr_a", "int_a1", undefined, command);
+    // The consequential part at the very end of the longest command the voice reads.
+    const tail = "; rm -rf ./important-data";
+    const longest = `printf ${"a".repeat(COMMAND_VOICE_MAX - "printf ".length - tail.length)}${tail}`;
+    expect(longest).toHaveLength(COMMAND_VOICE_MAX);
+    expect(parsePending(withCommand(longest))).toMatchObject({ detail: longest, inBb: null, decisions: ["allow_once", "allow_for_session", "deny"] });
+    // Only whitespace is folded.
+    expect(parsePending(withCommand("npm test \\\n  && git push"))).toMatchObject({ detail: "npm test \\ && git push" });
+
+    const long = `printf '%s\\n' ${Array.from({ length: 60 }, (_, i) => `arg${i}`).join(" ")}; rm -rf ./important-data`;
+    expect(long.length).toBeGreaterThan(COMMAND_VOICE_MAX);
+    const pending = parsePending(withCommand(long));
+    expect(pending).toMatchObject({ kind: "approval", detail: null, decisions: ["deny"], inBb: expect.stringContaining("Approve it in bb") });
+    if (pending === null) throw new Error("none");
+    const said = readAloud(pending, '"Fix it"');
+    expect(said).toBe(
+      `"Fix it" asks to run a command. Its reason: To run the tests. The command is too long to read aloud in full (${long.length} characters), so it cannot be approved by voice. Approve it in bb. You can deny it here.`,
+    );
+    expect(said).not.toContain("printf");
   });
 
   it("reads a plan approval with the plan's opening", () => {
@@ -99,7 +122,7 @@ describe("buildAnswers", () => {
   const multi = (parsePending(pluginQuestion("thr_a")) as { questions: SpokenQuestion[] }).questions;
 
   it("takes an option by its number or its label, without the (Recommended)", () => {
-    expect(buildAnswers(single, [{ options: [2] }], null)).toEqual({ ok: true, answers: { q0: { selected: ["q0o1"] } }, said: "SQLite" });
+    expect(buildAnswers(single, [{ options: [2] }], null)).toEqual({ ok: true, answers: { q0: { selected: ["q0o1"] } }, said: "SQLite", open: [] });
     expect(buildAnswers(single, [{ options: ["postgres"] }], null)).toMatchObject({ answers: { q0: { selected: ["q0o0"] } } });
     expect(buildAnswers(single, [{ options: ["2"] }], null)).toMatchObject({ answers: { q0: { selected: ["q0o1"] } } });
   });
@@ -111,7 +134,7 @@ describe("buildAnswers", () => {
 
   it("refuses two options for a single choice, and takes them for a multiple one", () => {
     expect(buildAnswers(single, [{ options: [1, 2] }], null)).toMatchObject({ ok: false });
-    expect(buildAnswers(multi, [{ options: [1, "patch it"] }], null)).toEqual({ ok: true, answers: { q0: { selected: ["q0o0", "q0o1"] } }, said: "Rewrite it and Patch it" });
+    expect(buildAnswers(multi, [{ options: [1, "patch it"] }], null)).toEqual({ ok: true, answers: { q0: { selected: ["q0o0", "q0o1"] } }, said: "Rewrite it and Patch it", open: [] });
   });
 
   it("answers in the user's own words only from the transcript, never the model's", () => {
@@ -119,6 +142,7 @@ describe("buildAnswers", () => {
       ok: true,
       answers: { q0: { selected: [], freeText: "Use whatever the staging box has." } },
       said: '"Use whatever the staging box has."',
+      open: [],
     });
     expect(buildAnswers(single, [{ useSpokenWords: true }], null)).toMatchObject({ ok: false });
   });
@@ -128,11 +152,30 @@ describe("buildAnswers", () => {
     expect(buildAnswers(strict, [{ useSpokenWords: true }], "anything")).toMatchObject({ ok: false });
   });
 
-  it("needs every required question answered, and an answer for each pick", () => {
+  it("says which required questions are still open, and needs an answer for each pick", () => {
     const two = [...single, { ...single[0], id: "q1", prompt: "And the cache?" } as SpokenQuestion];
-    expect(buildAnswers(two, [{ question: 1, options: [1] }], null)).toMatchObject({ ok: false, error: expect.stringContaining("And the cache?") });
-    expect(buildAnswers(two, [{ question: 1, options: [1] }, { question: 2, options: [2] }], null)).toMatchObject({ ok: true, said: "1: Postgres (Recommended); 2: SQLite" });
+    expect(buildAnswers(two, [{ question: 1, options: [1] }], null)).toMatchObject({ ok: true, open: [two[1]] });
+    expect(buildAnswers(two, [{ question: 1, options: [1] }, { question: 2, options: [2] }], null)).toMatchObject({ ok: true, said: "1: Postgres (Recommended); 2: SQLite", open: [] });
     expect(buildAnswers(single, [{}], null)).toMatchObject({ ok: false });
     expect(buildAnswers(two, [{ options: [1] }], null)).toMatchObject({ ok: false });
+  });
+
+  it("takes one question's own words per call, and adds each answer to those kept", () => {
+    const free = (id: string, prompt: string): SpokenQuestion => ({ id, prompt, header: null, multiSelect: false, allowFreeText: true, required: true, options: [] });
+    const two = [free("name", "Project name?"), free("date", "Target date?")];
+    // One span of words cannot be split between two answers.
+    expect(buildAnswers(two, [{ question: 1, useSpokenWords: true }, { question: 2, useSpokenWords: true }], "Call it Atlas. Next Friday.")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("one question at a time"),
+    });
+    const first = buildAnswers(two, [{ question: 1, useSpokenWords: true }], "Call it Atlas.");
+    expect(first).toMatchObject({ ok: true, answers: { name: { selected: [], freeText: "Call it Atlas." } }, open: [two[1]] });
+    if (!first.ok) throw new Error(first.error);
+    expect(buildAnswers(two, [{ question: 2, useSpokenWords: true }], "Next Friday.", first.answers)).toEqual({
+      ok: true,
+      answers: { name: { selected: [], freeText: "Call it Atlas." }, date: { selected: [], freeText: "Next Friday." } },
+      said: '1: "Call it Atlas."; 2: "Next Friday."',
+      open: [],
+    });
   });
 });

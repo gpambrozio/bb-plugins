@@ -72,6 +72,52 @@ describe("a session's start", () => {
     expect(harness.realtime.last.ofType("response.create")).toHaveLength(1);
   });
 
+  it("takes two Talks tapped at once in turn: the first is hung up, and disposal reaches the second", async () => {
+    const { sessions, realtime } = await setup();
+    const [first, second] = await Promise.all([sessions.start("v=0 window one"), sessions.start("v=0 window two")]);
+    expect(realtime.calls.map((call) => call.sdp)).toEqual(["v=0 window one", "v=0 window two"]);
+    expect(realtime.hungUp).toEqual(["rtc_1"]);
+    expect(sessions.current()?.id).toBe(second.sessionId);
+    expect(first.sessionId).not.toBe(second.sessionId);
+    await sessions.dispose();
+    expect(realtime.hungUp).toEqual(["rtc_1", "rtc_2"]);
+    expect(sessions.current()).toBeNull();
+  });
+
+  it("makes no session when the plugin stops while a start reads its settings", async () => {
+    const realtime = new FakeRealtime();
+    let release = () => {};
+    const lookup = new Promise<void>((resolve) => (release = resolve));
+    const sessions = new VoiceSessions({ realtime, bb: new FakeBb(), clock: new FakeClock(), log: quietLog(), publish: () => {} }, async () => {
+      await lookup;
+      return { model: "gpt-realtime-2.1", effort: "low", voice: "marin", eagerness: "auto" as const, instructions: "", announce: "talked-to" as const };
+    });
+    const start = sessions.start("v=0 offer");
+    const queued = sessions.start("v=0 second offer");
+    await settle();
+    await sessions.dispose();
+    release();
+    await expect(start).rejects.toThrow(/stopped/u);
+    await expect(queued).rejects.toThrow(/stopped/u);
+    expect(realtime.calls).toEqual([]);
+    expect(sessions.current()).toBeNull();
+  });
+
+  it("hangs up a call still being made when the plugin stops", async () => {
+    const { sessions, realtime } = await setup();
+    let release = () => {};
+    realtime.hold = new Promise<void>((resolve) => (release = resolve));
+    const start = sessions.start("v=0 offer");
+    await settle();
+    await sessions.dispose();
+    release();
+    await expect(start).rejects.toThrow();
+    expect(realtime.calls.map((call) => call.callId)).toEqual(["rtc_1"]);
+    await settle();
+    expect(realtime.hungUp).toEqual(["rtc_1"]);
+    expect(sessions.current()).toBeNull();
+  });
+
   it("is live for the app, and a second Talk takes over", async () => {
     const { sessions, realtime, signals, sessionId } = await started();
     expect(signals).toContainEqual({ sessionId, type: "state", state: "live" });
