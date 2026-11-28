@@ -103,7 +103,12 @@ the voice.
   of an id that is no longer the staged one is refused, so a newer edit is never applied blind. Stage, apply
   and reject run one at a time (`inTurn`), and apply and reject delete the stored edit only while it is still
   theirs (`drop`): an Apply whose setting write was still landing once deleted a replacement the voice staged
-  meanwhile (review pass 1), and during a reload the other copy's queue is not this one's. Applying
+  meanwhile (review pass 1). The queue is per copy, and during a reload two copies are loaded, so an Apply
+  first stores a claim on the edit (`applying`: its text and time), then writes the setting; either copy
+  refuses to apply or reject a claimed edit, so an old copy's slow write can no longer land after the new copy
+  reported a Reject or applied a tweak (review pass 2). A claim older than `APPLY_CLAIM_MS` is from a copy that
+  went away mid-write: `staged()` finishes the edit if the setting holds its text and otherwise puts it back up
+  for review; a failed write clears its own claim. Applying
   writes the **Instructions** setting, which a session reads once as it starts (`VoiceSession`'s
   `config`, reused by renewals and resumes), so it reaches the next session only. The rules say to propose
   only on the user's own words, never on an item's, a tool result's or an agent's. The Voice page shows the

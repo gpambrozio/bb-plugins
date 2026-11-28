@@ -32,6 +32,11 @@ export const StagedEditSchema = z.object({
   stagedAt: z.number(),
   /** The edit this one replaced, when one was waiting. */
   replaced: z.object({ summary: z.string().max(SUMMARY_MAX), stagedAt: z.number() }).nullable(),
+  /**
+   * Set while an Apply writes the setting: the text it writes and when it began. Stored on the edit itself,
+   * so the other copy of the plugin during a reload sees it too, and refuses to apply or reject the edit.
+   */
+  applying: z.object({ text: z.string().max(PROMPT_MAX), at: z.number() }).optional(),
 });
 export type StagedEdit = z.infer<typeof StagedEditSchema>;
 

@@ -7,8 +7,18 @@
  *
  * Stage, apply and reject each read, change and write the one stored edit across several awaits, so they run
  * one at a time: an Apply clicked while the voice stages a replacement would otherwise delete the replacement
- * unreviewed. Across a reload two copies of the plugin are loaded for a moment, and the queue is per copy, so
- * apply and reject also delete the stored edit only while it is still the one they acted on.
+ * unreviewed. Across a reload two copies of the plugin are loaded for a moment, and the queue is per copy, so:
+ *
+ * - An Apply first claims the edit in storage (`applying`), then writes the setting. While the claim is fresh,
+ *   either copy refuses to apply or reject that edit: an Apply still writing in the old copy would otherwise
+ *   land after the new copy had rejected the edit, or overwrite the owner's tweak applied there.
+ * - A claim older than `APPLY_CLAIM_MS` belongs to a copy that went away mid-write: if the setting holds its
+ *   text, the Apply landed and the edit is done; otherwise the edit waits for review again.
+ * - Apply and reject delete the stored edit only while it is still the one they acted on, so a replacement
+ *   the voice staged meanwhile stays.
+ *
+ * Storage has no compare-and-set, so a claim and a Reject in the same instant could both pass; the race that
+ * matters, a setting write still landing, is covered.
  */
 import { randomUUID } from "node:crypto";
 
@@ -16,6 +26,8 @@ import { PROMPT_MAX, StagedEditSchema, applyChanges, type PromptChange, type Sta
 import type { Clock, Log } from "./ports";
 
 export const STAGED_KEY = "staged-instructions-edit";
+/** How long an Apply's claim holds; a setting write takes well under a second. */
+export const APPLY_CLAIM_MS = 60_000;
 
 export interface PromptEditsDeps {
   kv: { get<T>(key: string): Promise<T | undefined>; set(key: string, value: unknown): Promise<void>; delete(key: string): Promise<void> };
@@ -48,6 +60,23 @@ export class PromptEdits {
 
   /** The staged edit, or null; one stored in a shape this version cannot read is dropped with a warning. */
   async staged(): Promise<StagedEdit | null> {
+    const stored = await this.stored();
+    if (stored?.applying === undefined || this.deps.clock.now() - stored.applying.at < APPLY_CLAIM_MS) return stored;
+    // A claim left by a copy that went away mid-Apply.
+    if ((await this.deps.instructions.get()) === stored.applying.text) {
+      await this.deps.kv.delete(STAGED_KEY);
+      this.deps.log.info("An interrupted Apply of the staged instructions edit had landed; the edit is done.");
+      this.deps.changed();
+      return null;
+    }
+    const { applying: _, ...waiting } = stored;
+    await this.deps.kv.set(STAGED_KEY, waiting);
+    this.deps.log.warn("An Apply of the staged instructions edit was interrupted before it landed; the edit waits for review again.");
+    return waiting;
+  }
+
+  /** The stored edit as it is, claim and all; one in a shape this version cannot read is dropped with a warning. */
+  private async stored(): Promise<StagedEdit | null> {
     const stored = await this.deps.kv.get<unknown>(STAGED_KEY);
     if (stored === undefined) return null;
     const parsed = StagedEditSchema.safeParse(stored);
@@ -92,7 +121,19 @@ export class PromptEdits {
     const staged = await this.waiting(id);
     const text = tweaked ?? staged.proposed;
     if (text.trim() === "") throw new Error("The instructions cannot be empty. To go back to the default, clear the Instructions setting.");
-    await this.deps.instructions.set(text);
+    // The claim goes into storage before the setting is written: see the module's comment.
+    await this.deps.kv.set(STAGED_KEY, { ...staged, applying: { text, at: this.deps.clock.now() } });
+    try {
+      await this.deps.instructions.set(text);
+    } catch (error) {
+      // Not written: the edit waits for review again.
+      const stored = await this.stored();
+      if (stored?.id === id) {
+        const { applying: _, ...waiting } = stored;
+        await this.deps.kv.set(STAGED_KEY, waiting);
+      }
+      throw error;
+    }
     await this.drop(id);
     this.deps.log.info(tweaked === undefined || tweaked === staged.proposed ? "Applied the staged instructions edit." : "Applied the staged instructions edit, as the owner tweaked it.");
     this.deps.changed();
@@ -119,7 +160,7 @@ export class PromptEdits {
 
   /** Deletes the stored edit if it is still `id`: one staged meanwhile, by the other copy during a reload, stays. */
   private async drop(id: string): Promise<void> {
-    const stored = await this.staged();
+    const stored = await this.stored();
     if (stored?.id !== id) {
       this.deps.log.warn("A newer instructions edit was staged meanwhile; it stays for review.");
       return;
@@ -132,6 +173,7 @@ export class PromptEdits {
     const staged = await this.staged();
     if (staged === null) throw new Error("No instructions edit is waiting: it was applied or rejected already.");
     if (staged.id !== id) throw new Error("A newer instructions edit replaced this one. Review the new one.");
+    if (staged.applying !== undefined) throw new Error("This instructions edit is being applied just now. Wait a moment, then look again.");
     return staged;
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { promptHandlers } from "./rpc";
-import { PromptEdits, STAGED_KEY } from "./prompt-edits";
+import { APPLY_CLAIM_MS, PromptEdits, STAGED_KEY } from "./prompt-edits";
 
 const NOW = "You are Voice Pilot.\n\nStyle: speak briefly.";
 
@@ -171,6 +171,75 @@ describe("overlapping changes", () => {
     writing.open();
     await applying;
     expect((await fresh.edits.read()).staged).toMatchObject({ id: "new_1", summary: "Shorter greeting" });
+  });
+
+  /** The old copy's Apply of edit_1, its setting write held, and the copy loaded by a reload beside it. */
+  async function applyingAcrossReload() {
+    const old = setUp();
+    const fresh = setUp(NOW, { rows: old.rows, setting: old.setting }, "new");
+    await old.edits.stage(first);
+    const writing = gate();
+    old.setting.hold = writing.promise;
+    const applying = old.edits.apply("edit_1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { old, fresh, writing, applying };
+  }
+
+  it("refuse a Reject in the new copy while the old copy's Apply is still writing the setting", async () => {
+    const { old, fresh, writing, applying } = await applyingAcrossReload();
+    await expect(fresh.edits.reject("edit_1")).rejects.toThrow(/being applied/u);
+    writing.open();
+    await applying;
+    // The Apply is what happened, and nothing reported a Reject that it then undid.
+    await expect(fresh.edits.read()).resolves.toEqual({ staged: null, current: first.text });
+    expect(old.setting.writes).toEqual([first.text]);
+  });
+
+  it("refuse a tweak in the new copy while the old copy's Apply is still writing, so neither overwrites the other", async () => {
+    const { old, fresh, writing, applying } = await applyingAcrossReload();
+    await expect(fresh.edits.apply("edit_1", `${NOW}\n\nCall the user Skipper.`)).rejects.toThrow(/being applied/u);
+    writing.open();
+    await applying;
+    expect(old.setting.writes).toEqual([first.text]);
+    await expect(fresh.edits.read()).resolves.toEqual({ staged: null, current: first.text });
+  });
+
+  it("put an edit back up for review when the copy applying it went away before the setting was written", async () => {
+    const { old, fresh } = await applyingAcrossReload();
+    // The old copy's write never lands (it was disposed mid-write); its claim lapses.
+    await expect(fresh.edits.reject("edit_1")).rejects.toThrow(/being applied/u);
+    fresh.tick(APPLY_CLAIM_MS);
+    const { staged } = await fresh.edits.read();
+    expect(staged).toMatchObject({ id: "edit_1" });
+    expect(staged?.applying).toBeUndefined();
+    await fresh.edits.reject("edit_1");
+    await expect(fresh.edits.read()).resolves.toEqual({ staged: null, current: NOW });
+    expect(old.setting.writes).toEqual([]);
+  });
+
+  it("finish an edit whose Apply landed when the copy applying it went away before tidying up", async () => {
+    const old = setUp();
+    const fresh = setUp(NOW, { rows: old.rows, setting: old.setting }, "new");
+    await old.edits.stage(first);
+    // As an Apply leaves it once the setting is written and before it drops the edit.
+    old.rows.set(STAGED_KEY, { ...(old.rows.get(STAGED_KEY) as object), applying: { text: first.text, at: 1_000 } });
+    old.setting.value = first.text;
+    fresh.tick(APPLY_CLAIM_MS);
+    await expect(fresh.edits.read()).resolves.toEqual({ staged: null, current: first.text });
+    expect(fresh.changed).toHaveBeenCalled();
+  });
+
+  it("put the edit back up for review when the setting write fails", async () => {
+    const { edits, setting } = setUp();
+    await edits.stage(first);
+    setting.hold = Promise.reject(new Error("settings are read-only"));
+    await expect(edits.apply("edit_1")).rejects.toThrow(/read-only/u);
+    setting.hold = null;
+    const { staged } = await edits.read();
+    expect(staged).toMatchObject({ id: "edit_1" });
+    expect(staged?.applying).toBeUndefined();
+    await edits.apply("edit_1");
+    expect(setting.writes).toEqual([first.text]);
   });
 });
 
