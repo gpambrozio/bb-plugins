@@ -1,0 +1,22 @@
+{
+  "what": "The settings' Open the script and Voice Pilot's hook editor, in a dev bb 0.50.1 started with a throwaway HOME holding only ~/.config/voice-pilot/hook.sh (mode 755); the owner's own hook folder was never read or written.",
+  "settingsText": "Has ~/.config/voice-pilot/hook.sh: it runs.",
+  "openedOn": "/plugins/voice-pilot/voice, in bb's file panel, tab hook.sh, editor header \"~/.config/voice-pilot/hook.sh on MacMini\"",
+  "loaded": "#!/bin/sh\n# Voice Pilot test hook.sh (dev bb only)\necho \"$VOICE_PILOT_HOOK\" >/dev/null\n",
+  "save": { "notice": "Saved on MacMini. It is still executable.", "fileChangedOnDisk": true, "modeBefore": "755", "modeAfter": "755" },
+  "conflict": {
+    "how": "a line appended to the file on disk after it was loaded, then an edit saved",
+    "warning": "The file changed on disk since it was loaded. Reload to see what is there now (your edits here are lost), or Save anyway to replace it with your version.",
+    "fileUntouched": true
+  },
+  "saveAnyway": { "written": true, "modeAfter": "755" },
+  "pageReload": { "editorRestoredByBb": true, "machineFoundFromBbsSource": true },
+  "offline": {
+    "how": "the dev bb's host daemon stopped with SIGSTOP (and resumed with SIGCONT afterwards), then an edit saved",
+    "notice": "Could not reach MacMini: it may be offline, or bb's host daemon there is not running. (the machine did not answer within 10 s)",
+    "afterMs": 10402,
+    "editKept": true,
+    "fileUntouched": true
+  },
+  "earlier": "Before the editor (commit 74e81aa), the same hook.sh opened in bb's File Editor (monaco-editor), which showed \"This file has no environment to resolve it against\": bb 0.50.1's File Editor resolves a host file only through an environment, and a plugin's host target has none."
+}

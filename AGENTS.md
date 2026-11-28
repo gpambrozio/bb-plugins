@@ -179,7 +179,9 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
   `BB_SERVER_URL=http://127.0.0.1:48886 BB_HOST_DAEMON_PORT=48887 BB_DATA_DIR=…` and
   `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
   web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
-  a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
+  a cached Chromium drives it headlessly. Do not set `window.bbDesktop` in such a page to pass as the desktop app: bb's
+  own app then takes it for Electron and stops ("bb hit an error and stopped"); `voice-pilot/scripts/e2e-desktop.ts`
+  rewrites the plugin's RPC input in flight instead. `learning-exercises/AGENTS.md` and its spike notes used it.
 
 ## Architecture
 
@@ -315,6 +317,16 @@ What a port only learns by running it:
   A form opened from a tool or the server does not queue messages sent through the SDK or the CLI, but
   in the app it takes the composer's place until it is answered; each one fires `interaction.pending`,
   which push notifications and Herald announce.
+- **A plugin can answer bb's questions.** `bb.sdk.threads.interactions.list` gives a thread's pending ones (an
+  answered one leaves the list; `get`/`bb thread interactions show` still has it). A provider's
+  `user_question` (Claude Code's own AskUserQuestion) is answered with `resolve({ resolution: { kind:
+  "user_answer", answers: { [questionId]: { selected: [optionValue], freeText? } } } })`; bb's bundled Ask
+  User Question plugin's card is a plugin form (`origin.pluginId` `ask-user-question`, questions in
+  `payload.data`) answered with `respond({ value: { answers } })`, the same shape (bb 0.50); an approval with
+  `resolve({ resolution: { decision, grantedPermissions: null } })` (`voice-pilot/server/questions.ts`).
+- **`threads.spawn` with `environment: { type: "project-default" }`** starts a thread as bb's New thread
+  screen does, with the project's own provider, model and workspace (a new worktree for a git project, bb
+  0.50); no `hostId` needed (`voice-pilot/server/bb-port.ts`).
 - **`fileChange` paths in the event log are absolute**, and on macOS Claude Code reports `/private/var/…`
   for a workspace bb knows as `/var/…` (`learning-exercises/server/signals.ts`, `relativize`).
 - **A plugin can set another provider's environment, per thread.**
@@ -508,6 +520,22 @@ showing, and a nav panel shows none. To put text in a thread's draft from a page
 `projectId` for a new thread), and write when the overlay's `useComposers()` lists a handle with that
 `scope`; check on every render and poll briefly, since a scope can change in place and the SDK
 harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
+
+**Opening a file in bb's file panel needs a surface that has one.** `useBbNavigate().experimental_openFilePreview`
+answers false on bb's settings page (bb 0.50.1), so a settings section hands the request to the plugin's own
+page and opens it there (`voice-pilot/app/hook-file.ts`). A `host` target (`{ kind: "host", hostId, path }`)
+opens any file on an enrolled machine through bb's own file access. bb picks a plugin file opener, its
+bundled File Editor (`monaco-editor`) included, by the file's extension, and `opener` names only the calling
+plugin's own registrations, so a file without an extension always opens in bb's read-only preview. And bb's
+File Editor cannot load a `host` file a plugin opens: it resolves one only through an environment, which a
+`host` target lacks ("This file has no environment to resolve it against"). To edit a file on a machine,
+register a `fileOpener` with `extensions: []`, open it by name (`opener`), and load and save through the
+plugin's host entry (`voice-pilot/app/hook-editor.tsx`); the opener gets the machine as
+`source.experimental_hostId`. bb's File Editor is built in but off in a fresh bb (`bb plugin enable monaco-editor`).
+
+**A sidebar badge has no icon.** `experimental_useBadge` takes `count`, `text` (8 characters), `tone` and
+`label`; a glyph such as `✎` in `text` is the nearest thing, and bb's icon-only rail draws any badge as a dot
+with `label` in its tooltip (`voice-pilot/app/prompt-edit-view.ts`).
 
 **A plugin cannot tell one device from another.** The SDK names no client, device or native app (SDK
 0.6.104–0.6.132); the only form-factor signal is `isCompactViewport`, which bb passes to several slots

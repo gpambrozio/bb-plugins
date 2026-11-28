@@ -1,0 +1,31 @@
+{
+  "note": "Live run in a dev bb (headless Chromium passing for bb's mobile app once loaded, ChatGPT subscription via codex-realtime): the page hidden and shown as bb leaving and coming back to the phone's screen, then a mute by voice. Not a real phone.",
+  "startedAt": "2026-11-26T01:00:54.610Z",
+  "connectedMs": 889,
+  "greeting": [
+    "Hi! Nothing is running right now, and nothing is waiting on you."
+  ],
+  "pause": {
+    "pausedLogged": "Paused: bb left the screen. It picks up when bb is back on the screen",
+    "dataChannelEventsWhilePaused": 0,
+    "cardBackMs": 810,
+    "cue": "I'm back and listening.",
+    "cueAudioMs": 1672,
+    "recall": [
+      "You asked me to remember the word “pineapple.”"
+    ],
+    "recalled": true,
+    "muteSaid": [
+      "You’re muted now. Tap Unmute to come back."
+    ],
+    "eventsWhileMuted": 0,
+    "sessionLog": [
+      "Paused: bb left the screen. It picks up when bb is back on the screen",
+      "The app is back after 10 s: a new call picks the session up",
+      "Call rtc_u7_EoI9Up3oN6WWzfqFjo5GmIBZs85omJuA made (back from a pause) over the ChatGPT subscription, with this session",
+      "The cue that the voice is back asked for (the standing instructions, then this)",
+      "Muted the microphone, as the user asked"
+    ]
+  },
+  "endedMs": 72832
+}

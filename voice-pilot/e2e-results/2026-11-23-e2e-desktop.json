@@ -1,0 +1,101 @@
+{
+  "startedAt": "2026-11-23T23:43:42.153Z",
+  "hooksAsDesktop": true,
+  "connectedMs": 1370,
+  "greetingFirstWordsMs": 2163,
+  "greeting": [
+    "Hi! \u201cPick the checkout button colour\u201d in Demo shop is waiting on you. \u201cAdd tax to the cart total\u201d in Demo shop is working."
+  ],
+  "greetingSpokenMs": 9717,
+  "waiting": [
+    "Let\u2019s pull up everything that needs your input so you can respond in the right place.",
+    "In \u201cPick the checkout button colour\u201d in Demo shop, it\u2019s asking: Which font should the receipts use?  \nOption 1: Serif.  \nOption 2: Sans.  \nYou can also answer in your own words."
+  ],
+  "waitingTools": [
+    "list_waiting",
+    "read_question"
+  ],
+  "resolution": {
+    "id": "pint_magxcex6w4",
+    "threadId": "thr_cwynh28dnw",
+    "status": "resolved",
+    "statusReason": null,
+    "createdAt": 1795477414506,
+    "expiresAt": null,
+    "resolvedAt": 1795477462157,
+    "turnId": "da9acae3be-t8",
+    "providerId": "claude-code",
+    "providerThreadId": "9656a422-0534-47bc-82ea-cfa9d0443957",
+    "providerRequestId": "d0ebe3e9-437f-4b70-a621-8e301fefa367:interaction-3",
+    "origin": {
+      "kind": "provider",
+      "providerId": "claude-code",
+      "providerThreadId": "9656a422-0534-47bc-82ea-cfa9d0443957",
+      "providerRequestId": "d0ebe3e9-437f-4b70-a621-8e301fefa367:interaction-3"
+    },
+    "payload": {
+      "kind": "user_question",
+      "questions": [
+        {
+          "id": "toolu_0157j8vXpHKzZQB2FjdEUFCi:question-1",
+          "prompt": "Which font should the receipts use?",
+          "shortLabel": "Font",
+          "multiSelect": false,
+          "options": [
+            {
+              "value": "toolu_0157j8vXpHKzZQB2FjdEUFCi:question-1:option-1",
+              "label": "Serif",
+              "description": "Use a serif font for receipts."
+            },
+            {
+              "value": "toolu_0157j8vXpHKzZQB2FjdEUFCi:question-1:option-2",
+              "label": "Sans",
+              "description": "Use a sans-serif font for receipts."
+            }
+          ],
+          "allowFreeText": true,
+          "required": true
+        }
+      ]
+    },
+    "resolution": {
+      "kind": "user_answer",
+      "answers": {
+        "toolu_0157j8vXpHKzZQB2FjdEUFCi:question-1": {
+          "selected": [
+            "toolu_0157j8vXpHKzZQB2FjdEUFCi:question-1:option-2"
+          ]
+        }
+      }
+    }
+  },
+  "saidBack": [
+    "Got it, I\u2019ll pass that choice along to the thread now.",
+    "I sent \u201cSans\u201d as your answer to \u201cPick the checkout button colour\u201d in Demo shop."
+  ],
+  "goodbye": [],
+  "endedMs": 53001,
+  "toolCalls": [
+    "list_waiting",
+    "read_question",
+    "answer_question",
+    "end_session"
+  ],
+  "hookLog": [
+    "13:43:44 listening-started ",
+    "13:43:45 speaking-started ",
+    "13:43:54 speaking-stopped ",
+    "13:43:56 talking-started ",
+    "13:43:58 talking-stopped ",
+    "13:43:59 speaking-started ",
+    "13:44:16 speaking-stopped ",
+    "13:44:18 talking-started ",
+    "13:44:20 talking-stopped ",
+    "13:44:20 speaking-started ",
+    "13:44:29 speaking-stopped ",
+    "13:44:31 talking-started ",
+    "13:44:33 talking-stopped ",
+    "13:44:36 listening-stopped ended by voice"
+  ],
+  "note": "Live run in a dev bb (bb 0.50.1), headless Chromium, speech from macOS say clips, ChatGPT subscription through codex-realtime, gpt-realtime-2.1 at low reasoning. The question thread is a real Claude Code thread asking with AskUserQuestion; the hook is a temporary ~/.config/voice-pilot/hook that logged each moment."
+}

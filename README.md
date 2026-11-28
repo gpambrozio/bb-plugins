@@ -3,7 +3,7 @@
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
 Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
-each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream`, `project-actions`, `duo-rail` and `code-mode` are new here.
+each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream`, `project-actions`, `duo-rail`, `code-mode` and `voice-pilot` are new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -23,6 +23,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `le
 | [`dream`](dream) | Consolidates each Claude Code project's memory overnight, as Claude Code's auto-dream does, in a hidden thread that can write only that memory. Schedule off until you turn it on. | New — 0.1.0 |
 | [`project-actions`](project-actions) | A menu of the project's named commands (dev server, tests, scripts) in each thread's header; each runs in a terminal of that thread, in its worktree. An editor for the list beside the thread. | New — 0.1.0 |
 | [`code-mode`](code-mode) | Runs the Claude Code threads you choose in Claude Code's experimental Code Mode, per thread, from the Send menu or a project default; no bb restart. | New — 0.1.0 |
+| [`voice-pilot`](voice-pilot) | Runs bb by voice: greets you with the running threads, answers bb's questions with your spoken choice, approves only on a spoken yes to a read-back, sends messages, and runs a hook script per machine. OpenAI realtime, on an API key or the ChatGPT subscription. | New — 0.1.0 |
 
 ## Install
 
